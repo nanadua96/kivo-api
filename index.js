@@ -144,9 +144,26 @@ app.get('/api/logout', async (req, res) => {
   });
 });
 
+function errorResponse({ code = 500, message = 'Something went wrong' }) {
+  let error = 'Internal Server Error';
+
+  if (code === 401) error = 'Unauthorized';
+
+  return {
+    statusCode: code,
+    error,
+    message,
+  };
+}
 app.get('/api/me', async (req, res) => {
   try {
-    if (!req.session?.userId) return res.send('You need to be authenticated!');
+    if (!req.session?.userId)
+      return res.status(401).json(
+        errorResponse({
+          code: 401,
+          message: 'You need to be authenticated to access this route.',
+        }),
+      );
 
     const { userId } = req.session;
 
@@ -354,7 +371,6 @@ async function shutdown() {
 async function closeServer() {
   server.close(async () => {
     try {
-      await redis.quit();
       await shutdown();
       process.exit(0);
     } catch (error) {
