@@ -13,12 +13,10 @@ import { History } from './chat.model.js';
 
 const app = express();
 
-const redis = () => {};
-
 const ai = new GoogleGenAI({});
 
 async function main() {
-  await mongoose.connect(process.env.MONGO_URI);
+  await mongoose.connect(process.env.MONGODB_URI);
   console.log('Connected to MongoDB');
 }
 
@@ -47,7 +45,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
+      mongoUrl: process.env.MONGODB_URI,
     }),
     cookie: {
       path: '/',
@@ -357,30 +355,18 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-async function shutdown() {
-  try {
-    await new Promise((resolve) => {
-      app.close?.(resolve);
-      resolve();
-    });
-    await redis.quit();
-  } catch (error) {
-    console.error('Shutdown error:', error);
-    process.exitCode = 1;
-  }
-}
+//! FIX
+// async function closeServer() {
+//   app.close(async () => {
+//     try {
+//       await shutdown();
+//       process.exit(0);
+//     } catch (error) {
+//       console.error('Shutdown error:', error);
+//       process.exit(1);
+//     }
+//   });
+// }
 
-async function closeServer() {
-  server.close(async () => {
-    try {
-      await shutdown();
-      process.exit(0);
-    } catch (error) {
-      console.error('Shutdown error:', error);
-      process.exit(1);
-    }
-  });
-}
-
-process.on('SIGINT', closeServer);
-process.on('SIGTERM', closeServer);
+// process.on('SIGINT', closeServer);
+// process.on('SIGTERM', closeServer);
