@@ -15,6 +15,8 @@ const app = express();
 
 const ai = new GoogleGenAI({});
 
+console.log('Render environment:', process.env.NODE_ENV);
+
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('Connected to MongoDB');
