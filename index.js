@@ -6,10 +6,10 @@ import helmet from 'helmet';
 import session from 'express-session';
 import z from 'zod';
 import argon2 from 'argon2';
-import mongoose, { isValidObjectId } from 'mongoose';
+import mongoose from 'mongoose';
 import { User } from './user.model.js';
 import MongoStore from 'connect-mongo';
-import { History } from './chat.model.js';
+import { Conversation } from './conversation.model.js';
 
 const app = express();
 
@@ -35,7 +35,7 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: ['http://127.0.0.1:4000', 'https://kivo.nanadua96.workers.dev'],
+    origin: ['http://127.0.0.1:4000', 'https://kivo-web-vqiz.onrender.com'],
     credentials: true,
   }),
 );
@@ -43,7 +43,7 @@ app.use(
 app.use(
   session({
     name: 'connect.sid',
-    secret: process.env.SESSION_SECRET || 'keyboard cat',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
@@ -53,7 +53,7 @@ app.use(
       path: '/',
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'none',
       maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
     },
   }),
@@ -68,6 +68,7 @@ app.post('/api/register', async (req, res) => {
       name: z.string(),
       password: z.string(),
       email: z.email(),
+      tempSessionId: z.string().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -90,6 +91,18 @@ app.post('/api/register', async (req, res) => {
 
     req.session.userId = createdUser._id;
 
+    // Check if user has unsaved conversation
+    if (result.data.tempSessionId) {
+      const conversation = await Conversation.findOne({
+        tempSessionId: result.data.tempSessionId,
+      }).exec();
+
+      conversation.user = createdUser._id;
+      conversation.tempSessionId = undefined;
+
+      await conversation.save();
+    }
+
     return res.send();
   } catch (error) {
     console.log(error);
@@ -104,6 +117,7 @@ app.post('/api/login', async (req, res) => {
     const schema = z.object({
       email: z.email(),
       password: z.string(),
+      tempSessionId: z.string().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -123,6 +137,18 @@ app.post('/api/login', async (req, res) => {
     if (!isValidPassword) return res.status(400).json({ message: 'Really?' });
 
     req.session.userId = user._id;
+
+    // Check if user has unsaved conversation
+    if (result.data.tempSessionId) {
+      const conversation = await Conversation.findOne({
+        tempSessionId: result.data.tempSessionId,
+      }).exec();
+
+      conversation.user = user._id;
+      conversation.tempSessionId = undefined;
+
+      await conversation.save();
+    }
 
     return res.send();
   } catch (error) {
@@ -181,10 +207,8 @@ app.get('/api/me', async (req, res) => {
 });
 
 app.post('/api/chats', async (req, res) => {
-  console.log('/api/chats');
-
   try {
-    const { chatId, model, message } = req.body;
+    const { chatId, model, message, tempSessionId } = req.body;
 
     let history = [];
 
@@ -193,8 +217,10 @@ app.post('/api/chats', async (req, res) => {
 
     const userId = req.session.userId;
 
-    if (chatId !== 'new' && isValidObjectId(chatId)) {
-      history = await History.findOne({ _id: chatId, user: userId }).exec();
+    if (chatId !== 'new') {
+      history = userId
+        ? await Conversation.findOne({ _id: chatId, user: userId }).exec()
+        : await Conversation.findOne({ tempSessionId }).exec();
 
       const formattedHistory = history
         ? history.messages.map((entry) => ({
@@ -253,21 +279,19 @@ app.post('/api/chats', async (req, res) => {
         content: [
           {
             type: 'text',
-            text: 'Give me a title for this chat. Its for a LLM chat app. Dont let it be more than 80 characters',
+            text: "Give me a title for this chat. It's for a LLM chat app. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version",
           },
         ],
       });
 
-      const interaction1 = await ai.interactions.create({
-        model,
-        input: input,
-      });
+      const interaction1 = await ai.interactions.create({ model, input });
 
       const title = interaction1.output_text;
 
-      const created = await History.create({
+      const created = await Conversation.create({
         title,
         user: userId,
+        tempSessionId,
         messages: [
           {
             role: 'user',
@@ -302,9 +326,11 @@ app.get('/api/chats', async (req, res) => {
   try {
     const { userId } = req.session;
 
-    const history = await History.find({ user: userId }, 'title').lean();
+    const conversation = await Conversation.find({ user: userId }, 'title')
+      .sort({ updatedAt: -1 })
+      .lean();
 
-    return res.json(history);
+    return res.json(conversation);
   } catch (error) {
     console.log(error);
 
@@ -331,9 +357,12 @@ app.get('/api/chats/:chatId', async (req, res) => {
     const { userId } = req.session;
     const { chatId } = req.params;
 
-    const history = await History.findOne({ _id: chatId, user: userId }).lean();
+    const conversations = await Conversation.findOne({
+      _id: chatId,
+      user: userId,
+    }).lean();
 
-    return res.json(history.messages);
+    return res.json(history.conversations);
   } catch (error) {
     console.log(error);
     return res.send('Eroor!');
