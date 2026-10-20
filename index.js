@@ -181,6 +181,8 @@ app.get('/api/me', async (req, res) => {
 });
 
 app.post('/api/chats', async (req, res) => {
+  console.log('/api/chats');
+
   try {
     const { chatId, model, message } = req.body;
 

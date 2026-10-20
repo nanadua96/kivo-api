@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "dev": "node --watch .",
+    "dev": "npx nodemon .",
     "start": "node ."
   },
   "type": "module",
