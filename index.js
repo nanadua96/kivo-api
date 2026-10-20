@@ -15,7 +15,7 @@ const app = express();
 
 const ai = new GoogleGenAI({});
 
-console.log('Render environment:', process.env.NODE_ENV);
+// console.log('Render environment:', process.env.NODE_ENV);
 
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
@@ -35,7 +35,7 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: ['http://127.0.0.1:4000'],
+    origin: ['http://127.0.0.1:4000', 'https://kivo.nanadua96.workers.dev'],
     credentials: true,
   }),
 );
