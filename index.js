@@ -72,29 +72,38 @@ app.post('/api/register', async (req, res) => {
       guestSessionId: z.string().optional(),
     });
 
-    const result = schema.safeParse(req.body);
+    const { data, success } = schema.safeParse(req.body);
 
-    if (!result.success)
-      return res.status(400).json({ message: 'invalid shit' });
+    if (!success)
+      return res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Invalid credentials.',
+      });
 
-    const exist = await User.exists({ email: result.data.email });
+    const exist = await User.exists({ email: data.email });
 
-    if (exist) return res.status(409).send('Duplicate account');
+    if (exist)
+      return res.status(409).json({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Account already exists.',
+      });
 
-    const hashedPassword = await argon2.hash(result.data.password);
+    const hashedPassword = await argon2.hash(data.password);
 
     const createdUser = await User.create({
-      name: result.data.name,
+      name: data.name,
       hash: hashedPassword,
-      email: result.data.email,
+      email: data.email,
     });
 
     req.session.userId = createdUser._id;
 
     // Check if user has unsaved conversation
-    if (result.data.tempSessionId) {
+    if (data.guestSessionId) {
       const conversation = await Conversation.findOne({
-        guestSessionId: result.data.guestSessionId,
+        guestSessionId: data.guestSessionId,
       }).exec();
 
       if (conversation) {
@@ -104,11 +113,13 @@ app.post('/api/register', async (req, res) => {
       }
     }
 
-    return res.send();
+    return res.status(201).send();
   } catch (error) {
-    console.log(error);
+    console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
-      message: 'Error!',
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
     });
   }
 });
@@ -132,14 +143,12 @@ app.post('/api/login', async (req, res) => {
 
     const user = await User.findOne({ email: data.email }).lean();
 
-    if (!user) {
-      console.log('KWHLWEWPEPWEU');
+    if (!user)
       return res.status(400).json({
         statusCode: 400,
         error: 'Bad Request',
         message: 'Invalid email or password.',
       });
-    }
 
     const isValidPassword = await argon2.verify(user.hash, data.password);
 
@@ -153,7 +162,7 @@ app.post('/api/login', async (req, res) => {
     req.session.userId = user._id;
 
     // Check if user has unsaved conversation
-    if (data.tempSessionId) {
+    if (data.guestSessionId) {
       const conversation = await Conversation.findOne({
         guestSessionId: data.guestSessionId,
       }).exec();
