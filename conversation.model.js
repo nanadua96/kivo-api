@@ -2,7 +2,10 @@ import { Schema, model } from 'mongoose';
 
 const conversationSchema = new Schema(
   {
-    title: String,
+    title: {
+      type: String,
+      maxLength: 100,
+    },
 
     user: {
       type: Schema.Types.ObjectId,
@@ -12,13 +15,14 @@ const conversationSchema = new Schema(
 
     guestSessionId: {
       type: String,
-      unique: true,
-      sparse: true,
+      //! USE cuid2 package to validate
     },
 
     messages: [{ role: String, text: String, timestamp: Date }],
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+  },
 );
 
 export const Conversation = model('Conversation', conversationSchema);

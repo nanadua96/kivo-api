@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import { User } from './user.model.js';
 import MongoStore from 'connect-mongo';
 import { Conversation } from './conversation.model.js';
+import morgan from 'morgan';
 
 const app = express();
 
@@ -31,6 +32,8 @@ app.use(express.json());
 
 app.use(helmet());
 
+app.use(morgan('dev'));
+
 app.use(
   cors({
     origin: ['http://127.0.0.1:4000', 'https://kivo-web-vqiz.onrender.com'],
@@ -51,7 +54,7 @@ app.use(
       path: '/',
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'none',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
     },
   }),
@@ -129,12 +132,14 @@ app.post('/api/login', async (req, res) => {
 
     const user = await User.findOne({ email: data.email }).lean();
 
-    if (!user)
+    if (!user) {
+      console.log('KWHLWEWPEPWEU');
       return res.status(400).json({
         statusCode: 400,
         error: 'Bad Request',
         message: 'Invalid email or password.',
       });
+    }
 
     const isValidPassword = await argon2.verify(user.hash, data.password);
 
@@ -230,6 +235,8 @@ app.post('/api/chats', async (req, res) => {
 
     const userId = req.session.userId;
 
+    //! if not authed, make guestSessionId required!
+
     //! FIX: PREVENT CREATING AN EXISTING CONVO
 
     if (chatId !== 'new') {
@@ -275,6 +282,18 @@ app.post('/api/chats', async (req, res) => {
     }
 
     if (chatId === 'new') {
+      // Avoid duplicates if guest
+      if (!userId) {
+        const checkConvo = await Conversation.exists({ guestSessionId });
+
+        if (checkConvo)
+          return res.status(409).json({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'A conversation already exists for this guest session.',
+          });
+      }
+
       const input = [
         { type: 'user_input', content: [{ type: 'text', text: message }] },
       ];
@@ -330,8 +349,12 @@ app.post('/api/chats', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Error:', error);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
   }
 });
 
@@ -347,9 +370,12 @@ app.get('/api/chats', async (req, res) => {
 
     return res.json(conversations);
   } catch (error) {
-    console.log(error);
-
-    return res.send('Eroor!');
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
   }
 });
 
@@ -373,14 +399,18 @@ app.get('/api/chats/:conversationId', async (req, res) => {
     const { conversationId } = req.params;
 
     const conversations = await Conversation.findOne({
-      _id: chatId,
+      _id: conversationId,
       user: userId,
     }).lean();
 
     return res.json(conversations.messages);
   } catch (error) {
-    console.log(error);
-    return res.send('Eroor!');
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
   }
 });
 
@@ -406,22 +436,26 @@ app.delete('/api/chats/:conversationId', async (req, res) => {
 
     return res.send();
   } catch (error) {
-    console.log(error);
-    return res.send('Eroor!'); //! FIX
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
   }
 });
 
-// Error handler
-app.use((err, req, res, _next) => {
-  console.error('Request failed:', err);
+// // Error handler
+// app.use((err, req, res, _next) => {
+//   console.error('Request failed:', err);
 
-  if (res.headersSent) return;
+//   if (res.headersSent) return;
 
-  res.status(500).json({
-    success: false,
-    message: 'An unexpected server error occurred.',
-  });
-});
+//   res.status(500).json({
+//     success: false,
+//     message: 'An unexpected server error occurred.',
+//   });
+// });
 
 app.listen(PORT, HOST, () => {
   console.log(`Server started!`);
