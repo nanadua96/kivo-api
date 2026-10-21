@@ -15,8 +15,6 @@ const app = express();
 
 const ai = new GoogleGenAI({});
 
-// console.log('Render environment:', process.env.NODE_ENV);
-
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('Connected to MongoDB');
@@ -25,7 +23,7 @@ async function main() {
 main().catch((err) => console.log(err));
 
 // Constants
-const HOST = process.env.HOST || 'http://127.0.0.1';
+const HOST = process.env.HOST || '127.0.0.1';
 const PORT = process.env.PORT || 3000;
 
 // Middlewares
@@ -68,7 +66,7 @@ app.post('/api/register', async (req, res) => {
       name: z.string(),
       password: z.string(),
       email: z.email(),
-      tempSessionId: z.string().optional(),
+      guestSessionId: z.string().optional(),
     });
 
     const result = schema.safeParse(req.body);
@@ -85,7 +83,6 @@ app.post('/api/register', async (req, res) => {
     const createdUser = await User.create({
       name: result.data.name,
       hash: hashedPassword,
-      createdAt: new Date().toISOString(),
       email: result.data.email,
     });
 
@@ -94,13 +91,14 @@ app.post('/api/register', async (req, res) => {
     // Check if user has unsaved conversation
     if (result.data.tempSessionId) {
       const conversation = await Conversation.findOne({
-        tempSessionId: result.data.tempSessionId,
+        guestSessionId: result.data.guestSessionId,
       }).exec();
 
-      conversation.user = createdUser._id;
-      conversation.tempSessionId = undefined;
-
-      await conversation.save();
+      if (conversation) {
+        conversation.user = createdUser._id;
+        conversation.guestSessionId = undefined;
+        await conversation.save();
+      }
     }
 
     return res.send();
@@ -114,47 +112,61 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const schema = z.object({
+    const loginSchema = z.object({
       email: z.email(),
       password: z.string(),
-      tempSessionId: z.string().optional(),
+      guestSessionId: z.string().optional(),
     });
 
-    const result = schema.safeParse(req.body);
+    const { success, data } = loginSchema.safeParse(req.body);
 
-    if (!result.success)
-      return res.status(400).json({ message: 'invalid shit' });
+    if (!success)
+      return res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Please provide a valid email address and password.',
+      });
 
-    const user = await User.findOne({ email: result.data.email }).lean();
+    const user = await User.findOne({ email: data.email }).lean();
 
-    if (!user) return res.status(400).json({ message: 'Really?' });
+    if (!user)
+      return res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Invalid email or password.',
+      });
 
-    const isValidPassword = await argon2.verify(
-      user.hash,
-      result.data.password,
-    );
+    const isValidPassword = await argon2.verify(user.hash, data.password);
 
-    if (!isValidPassword) return res.status(400).json({ message: 'Really?' });
+    if (!isValidPassword)
+      return res.status(400).json({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Invalid email or password.',
+      });
 
     req.session.userId = user._id;
 
     // Check if user has unsaved conversation
-    if (result.data.tempSessionId) {
+    if (data.tempSessionId) {
       const conversation = await Conversation.findOne({
-        tempSessionId: result.data.tempSessionId,
+        guestSessionId: data.guestSessionId,
       }).exec();
 
-      conversation.user = user._id;
-      conversation.tempSessionId = undefined;
-
-      await conversation.save();
+      if (conversation) {
+        conversation.user = user._id;
+        conversation.guestSessionId = undefined;
+        await conversation.save();
+      }
     }
 
     return res.send();
   } catch (error) {
-    console.log(error);
+    console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
-      message: 'Error!',
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
     });
   }
 });
@@ -181,6 +193,7 @@ function errorResponse({ code = 500, message = 'Something went wrong' }) {
     message,
   };
 }
+
 app.get('/api/me', async (req, res) => {
   try {
     if (!req.session?.userId)
@@ -208,7 +221,7 @@ app.get('/api/me', async (req, res) => {
 
 app.post('/api/chats', async (req, res) => {
   try {
-    const { chatId, model, message, tempSessionId } = req.body;
+    const { chatId = 'new', model, message, guestSessionId } = req.body;
 
     let history = [];
 
@@ -217,10 +230,12 @@ app.post('/api/chats', async (req, res) => {
 
     const userId = req.session.userId;
 
+    //! FIX: PREVENT CREATING AN EXISTING CONVO
+
     if (chatId !== 'new') {
       history = userId
         ? await Conversation.findOne({ _id: chatId, user: userId }).exec()
-        : await Conversation.findOne({ tempSessionId }).exec();
+        : await Conversation.findOne({ guestSessionId }).exec();
 
       const formattedHistory = history
         ? history.messages.map((entry) => ({
@@ -291,7 +306,7 @@ app.post('/api/chats', async (req, res) => {
       const created = await Conversation.create({
         title,
         user: userId,
-        tempSessionId,
+        guestSessionId,
         messages: [
           {
             role: 'user',
@@ -326,11 +341,11 @@ app.get('/api/chats', async (req, res) => {
   try {
     const { userId } = req.session;
 
-    const conversation = await Conversation.find({ user: userId }, 'title')
+    const conversations = await Conversation.find({ user: userId }, 'title')
       .sort({ updatedAt: -1 })
       .lean();
 
-    return res.json(conversation);
+    return res.json(conversations);
   } catch (error) {
     console.log(error);
 
@@ -350,22 +365,49 @@ app.use((err, req, res, _next) => {
   });
 });
 
-app.get('/api/chats/:chatId', async (req, res) => {
+app.get('/api/chats/:conversationId', async (req, res) => {
   if (!req.session?.userId) return res.send('You need to be authenticated!');
 
   try {
     const { userId } = req.session;
-    const { chatId } = req.params;
+    const { conversationId } = req.params;
 
     const conversations = await Conversation.findOne({
       _id: chatId,
       user: userId,
     }).lean();
 
-    return res.json(history.conversations);
+    return res.json(conversations.messages);
   } catch (error) {
     console.log(error);
     return res.send('Eroor!');
+  }
+});
+
+app.delete('/api/chats/:conversationId', async (req, res) => {
+  const userId = req.session?.userId;
+
+  const { conversationId } = req.params;
+  const { guestSessionId } = req.query;
+
+  try {
+    //! ADD  NOT FOUND ERROR
+    // If user id authenticated
+    if (userId)
+      await Conversation.deleteOne({
+        _id: conversationId,
+        user: userId,
+      }).lean();
+    else
+      await Conversation.deleteOne({
+        _id: conversationId,
+        guestSessionId,
+      }).lean();
+
+    return res.send();
+  } catch (error) {
+    console.log(error);
+    return res.send('Eroor!'); //! FIX
   }
 });
 
@@ -382,7 +424,7 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`Server running on ${HOST}:${PORT}`);
+  console.log(`Server started!`);
 });
 
 // Graceful shutdown

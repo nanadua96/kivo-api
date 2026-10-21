@@ -10,9 +10,10 @@ const conversationSchema = new Schema(
       default: '000000000000000000000000',
     },
 
-    tempSessionId: {
+    guestSessionId: {
       type: String,
       unique: true,
+      sparse: true,
     },
 
     messages: [{ role: String, text: String, timestamp: Date }],
