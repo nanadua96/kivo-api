@@ -55,6 +55,8 @@ app.use(
     cookie: {
       path: '/',
       httpOnly: true,
+      domain:
+        process.env.NODE_ENV === 'production' ? 'onrender.com' : undefined,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
