@@ -326,7 +326,7 @@ app.post('/api/chats', async (req, res) => {
         content: [
           {
             type: 'text',
-            text: "Give me a title for this chat. It's for a LLM chat app. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version",
+            text: "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version.",
           },
         ],
       });
@@ -372,6 +372,7 @@ app.post('/api/chats', async (req, res) => {
 });
 
 app.get('/api/chats', async (req, res) => {
+  //! ADD PAGINATION
   if (!req.session?.userId) return res.send('You need to be authenticated!');
 
   try {
@@ -411,12 +412,19 @@ app.get('/api/chats/:conversationId', async (req, res) => {
     const { userId } = req.session;
     const { conversationId } = req.params;
 
-    const conversations = await Conversation.findOne({
+    const conversation = await Conversation.findOne({
       _id: conversationId,
       user: userId,
     }).lean();
 
-    return res.json(conversations.messages);
+    if (!conversation)
+      return res.status(404).json({
+        statusCode: 404,
+        error: 'Not found',
+        message: 'Couldnt get messages.',
+      });
+
+    return res.json(conversation.messages);
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
@@ -446,6 +454,144 @@ app.delete('/api/chats/:conversationId', async (req, res) => {
         _id: conversationId,
         guestSessionId,
       }).lean();
+
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/chats/delete/all', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const userId = req.session.userId;
+
+  try {
+    await Conversation.deleteMany({ user: userId }).exec();
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/chats/:conversationId/rename', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const { conversationId } = req.params;
+  const userId = req.session.userId;
+
+  const { title } = req.body; //! VALIDTAE
+
+  try {
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: userId,
+    }).exec();
+
+    conversation.title = title;
+
+    await conversation.save();
+
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/chats/:chatId/pin', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const { userId } = req.session;
+
+  const { chatId } = req.params;
+
+  try {
+    const chat = await Conversation.findOne({
+      _id: chatId,
+      user: userId,
+    }).exec();
+
+    // if (!chat) return res.send() //! ADD THIS
+
+    chat.pinned = !chat.pinned;
+
+    await chat.save();
+
+    return res.send({
+      pinned: chat.pinned,
+    });
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/chats/pinned', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const { conversationId } = req.params;
+  const userId = req.session.userId;
+
+  const { title } = req.body; //! VALIDTAE
+
+  try {
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: userId,
+    }).exec();
+
+    conversation.title = title;
+
+    await conversation.save();
+
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+//! USER SIDE
+app.post('/api/users/edit-profile', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const { conversationId } = req.params;
+  const userId = req.session.userId;
+
+  const { title } = req.body; //! VALIDTAE
+
+  try {
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      user: userId,
+    }).exec();
+
+    conversation.title = title;
+
+    await conversation.save();
 
     return res.send();
   } catch (error) {

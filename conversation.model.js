@@ -1,5 +1,6 @@
 import { Schema, model } from 'mongoose';
 
+//! RENAME TO CHATS
 const conversationSchema = new Schema(
   {
     title: {
@@ -11,6 +12,11 @@ const conversationSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'User',
       default: '000000000000000000000000',
+    },
+
+    pinned: {
+      type: Boolean,
+      default: false,
     },
 
     guestSessionId: {
