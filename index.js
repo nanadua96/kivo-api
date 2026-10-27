@@ -11,6 +11,7 @@ import { User } from './user.model.js';
 import MongoStore from 'connect-mongo';
 import { Conversation } from './conversation.model.js';
 import morgan from 'morgan';
+import { Message } from './message.model.js';
 
 const app = express();
 
@@ -239,30 +240,33 @@ app.get('/api/me', async (req, res) => {
 
 app.post('/api/chats', async (req, res) => {
   try {
-    const { chatId = 'new', model, message, guestSessionId } = req.body;
+    const {
+      conversationId = 'new',
+      model,
+      message,
+      sessionHistory = [],
+    } = req.body;
 
-    let history = [];
+    let history = sessionHistory;
 
     if (!message)
       return res.status(400).json({ error: 'Message input is required' });
 
     const userId = req.session.userId;
 
-    //! if not authed, make guestSessionId required!
+    //! USE TRANSACTIONS
 
-    //! FIX: PREVENT CREATING AN EXISTING CONVO
-
-    //! ADD PAGINATION!!
-
-    if (chatId !== 'new') {
-      history = userId
-        ? await Conversation.findOne({ _id: chatId, user: userId }).exec()
-        : await Conversation.findOne({ guestSessionId }).exec();
+    if (conversationId !== 'new') {
+      if (userId)
+        history = await Message.find({
+          conversation: conversationId,
+          user: userId,
+        }).lean();
 
       const formattedHistory = history
-        ? history.messages.map((entry) => ({
+        ? history.map((entry) => ({
             type: entry.role === 'assistant' ? 'model_output' : 'user_input',
-            content: [{ type: 'text', text: entry.text }],
+            content: [{ type: 'text', text: entry.content }],
           }))
         : [];
 
@@ -275,40 +279,27 @@ app.post('/api/chats', async (req, res) => {
 
       const reply = interaction.output_text;
 
-      history.messages.push({
-        role: 'user',
-        text: message,
-        timestamp: new Date(),
-      });
+      await Message.create([
+        {
+          role: 'user',
+          content: message,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+        {
+          role: 'assistant',
+          content: reply,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+      ]);
 
-      history.messages.push({
-        role: 'assistant',
-        text: reply,
-        timestamp: new Date(),
-      });
-
-      await history.save();
-
-      return res.json({
-        role: 'assistant',
-        text: reply,
-        timestamp: new Date(),
-      });
+      return res.json({ role: 'assistant', content: reply });
     }
 
-    if (chatId === 'new') {
-      // Avoid duplicates if guest
-      // if (!userId) {
-      // const checkConvo = await Conversation.exists({ guestSessionId });
-
-      //   if (checkConvo)
-      //     return res.status(409).json({
-      //       statusCode: 409,
-      //       error: 'Conflict',
-      //       message: 'A conversation already exists for this guest session.',
-      //     });
-      // }
-
+    if (conversationId === 'new') {
       const input = [
         { type: 'user_input', content: [{ type: 'text', text: message }] },
       ];
@@ -337,30 +328,34 @@ app.post('/api/chats', async (req, res) => {
 
       const title = interaction1.output_text;
 
-      const created = await Conversation.create({
+      const createdConversation = await Conversation.create({
+        model,
         title,
         user: userId,
-        guestSessionId,
-        messages: [
-          {
-            role: 'user',
-            text: message,
-            timestamp: new Date(),
-          },
-          {
-            role: 'assistant',
-            text: reply,
-            timestamp: new Date(),
-          },
-        ],
       });
 
+      await Message.create([
+        {
+          content: message,
+          conversation: createdConversation._id,
+          role: 'user',
+          user: userId,
+          model,
+        },
+        {
+          content: reply,
+          conversation: createdConversation._id,
+          role: 'assistant',
+          user: userId,
+          model,
+        },
+      ]);
+
       return res.json({
-        chatId: created._id,
+        chatId: createdConversation._id,
         title,
         role: 'assistant',
-        text: reply,
-        timestamp: new Date(),
+        content: reply,
       });
     }
   } catch (error) {
@@ -381,7 +376,7 @@ app.get('/api/chats', async (req, res) => {
     const { userId } = req.session;
 
     const conversations = await Conversation.find(
-      { user: userId, pinned: false },
+      { user: userId, pinned: false, status: 'active' },
       'title',
     )
       .sort({ updatedAt: -1 })
@@ -398,38 +393,29 @@ app.get('/api/chats', async (req, res) => {
   }
 });
 
-// Error handler
-app.use((err, req, res, _next) => {
-  console.error('Request failed:', err);
-
-  if (res.headersSent) return;
-
-  res.status(500).json({
-    success: false,
-    message: 'An unexpected server error occurred.',
-  });
-});
-
-app.get('/api/chats/:conversationId', async (req, res) => {
+app.get('/api/chats/:id/messages', async (req, res) => {
   if (!req.session?.userId) return res.send('You need to be authenticated!');
 
   try {
     const { userId } = req.session;
-    const { conversationId } = req.params;
+    const { id } = req.params;
 
-    const conversation = await Conversation.findOne({
-      _id: conversationId,
+    const isActive = await Conversation.exists({
+      _id: id,
       user: userId,
+      status: 'active',
     }).lean();
 
-    if (!conversation)
-      return res.status(404).json({
-        statusCode: 404,
-        error: 'Not found',
-        message: 'Couldnt get messages.',
-      });
+    if (!isActive) return res.json([]);
 
-    return res.json(conversation.messages);
+    const messages = await Message.find({
+      conversation: id,
+      user: userId,
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    return res.json(messages);
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
@@ -440,25 +426,30 @@ app.get('/api/chats/:conversationId', async (req, res) => {
   }
 });
 
-app.delete('/api/chats/:conversationId', async (req, res) => {
+app.delete('/api/chats/:id', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
   const userId = req.session?.userId;
 
-  const { conversationId } = req.params;
-  const { guestSessionId } = req.query;
+  const { id } = req.params;
 
   try {
-    //! ADD  NOT FOUND ERROR
-    // If user id authenticated
-    if (userId)
-      await Conversation.deleteOne({
-        _id: conversationId,
-        user: userId,
-      }).lean();
-    else
-      await Conversation.deleteOne({
-        _id: conversationId,
-        guestSessionId,
-      }).lean();
+    const converstaion = await Conversation.findOne({
+      _id: id,
+      user: userId,
+      status: 'active',
+    }).exec();
+
+    if (!converstaion)
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Something went wrong.',
+      });
+
+    converstaion.status = 'deleted';
+
+    await converstaion.save();
 
     return res.send();
   } catch (error) {
@@ -477,7 +468,10 @@ app.post('/api/chats/delete/all', async (req, res) => {
   const userId = req.session.userId;
 
   try {
-    await Conversation.deleteMany({ user: userId }).exec();
+    await Conversation.updateMany(
+      { user: userId },
+      { status: 'deleted' },
+    ).exec();
     return res.send();
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
@@ -501,7 +495,15 @@ app.post('/api/chats/:conversationId/rename', async (req, res) => {
     const conversation = await Conversation.findOne({
       _id: conversationId,
       user: userId,
+      status: 'active',
     }).exec();
+
+    if (!conversation)
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Something went wrong.',
+      });
 
     conversation.title = title;
 
@@ -556,8 +558,6 @@ app.post('/api/chats/pinned', async (req, res) => {
 
   const { userId } = req.session;
 
-  console.log('SHHEP', userId);
-
   try {
     const pinned = await Conversation.find(
       { user: userId, pinned: true },
@@ -565,6 +565,225 @@ app.post('/api/chats/pinned', async (req, res) => {
     ).exec();
 
     return res.json(pinned);
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/messages/:id/feedback', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  try {
+    const { id } = req.params;
+    const { userId } = req.session;
+    const { rating } = req.body;
+
+    const message = await Message.findOne({
+      _id: id,
+      user: userId,
+      role: 'assistant',
+    }).exec();
+
+    if (!message) return res.send('Not found!'); //! FIX
+
+    message.feedback.rating = rating;
+    message.feedback.updatedAt = Date.now();
+
+    await message.save();
+
+    return res.json();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+//! NO AUTH
+app.patch('/api/messages/:id/edit', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { model, message, createdAt, sessionHistory = [] } = req.body;
+
+    let history = sessionHistory;
+
+    if (!message)
+      return res.status(400).json({ error: 'Message input is required' });
+
+    const userId = req.session.userId;
+
+    //! USE TRANSACTIONS
+
+    if (userId) {
+      const msgs = await Message.find({
+        conversation: id,
+        user: userId,
+        createdAt: { $lte: createdAt },
+        role: 'user',
+      }).lean();
+
+      if (!msgs) return res.send('NOT FOUND!!');
+
+      history = msgs;
+    }
+
+    // return res.json(history);
+
+    // if (userId)
+    //   history = await Message.find({ conversation: id, user: userId }).lean();
+
+    const formattedHistory = history
+      ? history.map((entry) => ({
+          type: entry.role === 'assistant' ? 'model_output' : 'user_input',
+          content: [{ type: 'text', text: entry.content }],
+        }))
+      : [];
+
+    const input = [
+      ...formattedHistory,
+      { type: 'user_input', content: [{ type: 'text', text: message }] },
+    ];
+
+    const interaction = await ai.interactions.create({ model, input });
+
+    const reply = interaction.output_text;
+
+    await Message.deleteMany({
+      conversation: id,
+      user: userId,
+      createdAt: { $gte: createdAt },
+    });
+
+    await Message.create([
+      {
+        role: 'user',
+        content: message,
+        conversation: id,
+        user: userId,
+      },
+      {
+        role: 'assistant',
+        content: reply,
+        conversation: id,
+        user: userId,
+      },
+    ]);
+
+    return res.json({
+      role: 'assistant',
+      text: reply,
+      timestamp: new Date(),
+    });
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/messages/:id/regenerate', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { sessionHistory = [], conversationId } = req.body;
+
+    let history = sessionHistory;
+
+    let model = '';
+    let message = '';
+    let createdAt = '';
+
+    const userId = req.session.userId;
+
+    //! USE TRANSACTIONS
+
+    if (userId) {
+      const msg = await Message.findOne({
+        _id: id,
+        conversation: conversationId,
+        user: userId,
+        role: 'user',
+      }).lean();
+
+      // console.log('LHLKHWEKWHEPOWUEPO', msg);
+
+      if (!msg) return res.send('NOT FOUND!!');
+
+      // return res.send('');
+
+      model = msg.model;
+      message = msg.message;
+      createdAt = msg.createdAt;
+
+      history = await Message.find({
+        conversation: conversationId,
+        user: userId,
+        createdAt: { $lte: createdAt },
+        role: 'user',
+      }).lean();
+    }
+
+    // return res.json(history);
+
+    // if (userId)
+    //   history = await Message.find({ conversation: id, user: userId }).lean();
+
+    const formattedHistory = history
+      ? history.map((i) => ({
+          type: i.role === 'assistant' ? 'model_output' : 'user_input',
+          content: [{ type: 'text', text: i.content }],
+        }))
+      : [];
+
+    const input = [...formattedHistory];
+
+    // return res.json(input);
+
+    const interaction = await ai.interactions.create({
+      model,
+      input,
+    });
+
+    const reply = interaction.output_text;
+
+    await Message.deleteMany({
+      conversation: conversationId,
+      user: userId,
+      createdAt: { $gte: createdAt },
+    });
+
+    await Message.create([
+      {
+        role: 'user',
+        content: message,
+        conversation: conversationId,
+        user: userId,
+      },
+      {
+        role: 'assistant',
+        content: reply,
+        conversation: conversationId,
+        user: userId,
+      },
+    ]);
+
+    return res.json({
+      role: 'assistant',
+      text: reply,
+      timestamp: new Date(),
+    });
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({

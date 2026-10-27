@@ -2,6 +2,13 @@ import { Schema, model } from 'mongoose';
 
 const messageSchema = new Schema(
   {
+    user: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      immutable: true,
+    },
+
     conversation: {
       type: Schema.Types.ObjectId,
       ref: 'Conversation',
@@ -12,11 +19,27 @@ const messageSchema = new Schema(
       type: String,
       enum: ['system', 'user', 'assistant'],
       required: true,
+      immutable: true,
     },
 
     content: {
       type: String,
       default: '',
+    },
+
+    model: {
+      type: String,
+    },
+
+    feedback: {
+      rating: {
+        type: String,
+        enum: ['up', 'down'],
+      },
+
+      updatedAt: {
+        type: Date,
+      },
     },
 
     status: {
