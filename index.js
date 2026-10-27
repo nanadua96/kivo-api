@@ -298,16 +298,16 @@ app.post('/api/chats', async (req, res) => {
 
     if (chatId === 'new') {
       // Avoid duplicates if guest
-      if (!userId) {
-        const checkConvo = await Conversation.exists({ guestSessionId });
+      // if (!userId) {
+      // const checkConvo = await Conversation.exists({ guestSessionId });
 
-        if (checkConvo)
-          return res.status(409).json({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'A conversation already exists for this guest session.',
-          });
-      }
+      //   if (checkConvo)
+      //     return res.status(409).json({
+      //       statusCode: 409,
+      //       error: 'Conflict',
+      //       message: 'A conversation already exists for this guest session.',
+      //     });
+      // }
 
       const input = [
         { type: 'user_input', content: [{ type: 'text', text: message }] },

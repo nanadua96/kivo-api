@@ -2,12 +2,27 @@ import { Schema, model } from 'mongoose';
 
 const messageSchema = new Schema(
   {
-    role: {
-      type: String,
+    conversation: {
+      type: Schema.Types.ObjectId,
+      ref: 'Conversation',
+      required: true,
     },
 
-    text: {
+    role: {
       type: String,
+      enum: ['system', 'user', 'assistant'],
+      required: true,
+    },
+
+    content: {
+      type: String,
+      default: '',
+    },
+
+    status: {
+      type: String,
+      enum: ['pending', 'streaming', 'complete', 'error', 'cancelled'],
+      default: 'complete',
     },
   },
   {

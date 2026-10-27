@@ -30,6 +30,12 @@ const userSchema = new mongoose.Schema(
     deletedUser: {
       email: String,
     },
+
+    //   "settings": {
+    //   "defaultModel": "gpt-4o",
+    //   "theme": "dark",
+    //   "temperature": 0.7
+    // },
   },
   { timestamps: true },
 );
