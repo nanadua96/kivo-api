@@ -166,17 +166,17 @@ app.post('/api/login', async (req, res) => {
     req.session.userId = user._id;
 
     // Check if user has unsaved conversation
-    if (data.guestSessionId) {
-      const conversation = await Conversation.findOne({
-        guestSessionId: data.guestSessionId,
-      }).exec();
+    // if (data.guestSessionId) {
+    //   const conversation = await Conversation.findOne({
+    //     guestSessionId: data.guestSessionId,
+    //   }).exec();
 
-      if (conversation) {
-        conversation.user = user._id;
-        conversation.guestSessionId = undefined;
-        await conversation.save();
-      }
-    }
+    //   if (conversation) {
+    //     conversation.user = user._id;
+    //     conversation.guestSessionId = undefined;
+    //     await conversation.save();
+    //   }
+    // }
 
     return res.send();
   } catch (error) {
@@ -225,7 +225,7 @@ app.get('/api/me', async (req, res) => {
     const { userId } = req.session;
 
     const user = await User.findById(userId)
-      .select({ password: 0, __v: 0 })
+      .select({ email: 1, name: 1 })
       .lean();
 
     if (!user) return res.send('User not found!');
@@ -251,6 +251,8 @@ app.post('/api/chats', async (req, res) => {
     //! if not authed, make guestSessionId required!
 
     //! FIX: PREVENT CREATING AN EXISTING CONVO
+
+    //! ADD PAGINATION!!
 
     if (chatId !== 'new') {
       history = userId
@@ -378,7 +380,10 @@ app.get('/api/chats', async (req, res) => {
   try {
     const { userId } = req.session;
 
-    const conversations = await Conversation.find({ user: userId }, 'title')
+    const conversations = await Conversation.find(
+      { user: userId, pinned: false },
+      'title',
+    )
       .sort({ updatedAt: -1 })
       .lean();
 
@@ -520,6 +525,7 @@ app.post('/api/chats/:chatId/pin', async (req, res) => {
 
   const { chatId } = req.params;
 
+  //! LIMIT BY 10 OR 5
   try {
     const chat = await Conversation.findOne({
       _id: chatId,
@@ -548,22 +554,17 @@ app.post('/api/chats/:chatId/pin', async (req, res) => {
 app.post('/api/chats/pinned', async (req, res) => {
   if (!req.session?.userId) return res.send('You need to be authenticated!');
 
-  const { conversationId } = req.params;
-  const userId = req.session.userId;
+  const { userId } = req.session;
 
-  const { title } = req.body; //! VALIDTAE
+  console.log('SHHEP', userId);
 
   try {
-    const conversation = await Conversation.findOne({
-      _id: conversationId,
-      user: userId,
-    }).exec();
+    const pinned = await Conversation.find(
+      { user: userId, pinned: true },
+      'title',
+    ).exec();
 
-    conversation.title = title;
-
-    await conversation.save();
-
-    return res.send();
+    return res.json(pinned);
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
@@ -574,24 +575,79 @@ app.post('/api/chats/pinned', async (req, res) => {
   }
 });
 
-//! USER SIDE
-app.post('/api/users/edit-profile', async (req, res) => {
+app.patch('/api/users', async (req, res) => {
   if (!req.session?.userId) return res.send('You need to be authenticated!');
 
-  const { conversationId } = req.params;
+  const { name } = req.body; //! USE ZOD OR SCHEMA VALIDATOR
   const userId = req.session.userId;
 
-  const { title } = req.body; //! VALIDTAE
+  try {
+    const user = await User.findById(userId).exec();
+    if (user.name) user.name = name;
+    await user.save();
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/users/deactivate', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const userId = req.session.userId;
 
   try {
-    const conversation = await Conversation.findOne({
-      _id: conversationId,
-      user: userId,
-    }).exec();
+    const user = await User.findById(userId).exec();
 
-    conversation.title = title;
+    user.deletedAt = Date.now();
+    user.deletedUser.email = user.email;
 
-    await conversation.save();
+    user.email = `deleted-${Math.random() * 1000}@kivo.com`; //! FIX
+
+    await user.save();
+
+    // Log person out
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('Session destruction failed:', err);
+        return res.status(500).json({ message: 'Logout failed' });
+      }
+
+      return res.send();
+    });
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/users/change-email', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
+
+  const { userId } = req.session;
+  const { newEmail } = req.body;
+
+  try {
+    const user = await User.findById(userId).exec();
+
+    if (newEmail === user.email)
+      return res.status(400).send('duplicate email!');
+
+    user.email = newEmail;
+
+    //! HANDLE if email was found on another account
+    //! Send security alert
+
+    await user.save();
 
     return res.send();
   } catch (error) {
@@ -604,35 +660,35 @@ app.post('/api/users/edit-profile', async (req, res) => {
   }
 });
 
-// // Error handler
-// app.use((err, req, res, _next) => {
-//   console.error('Request failed:', err);
+app.post('/api/users/change-password', async (req, res) => {
+  if (!req.session?.userId) return res.send('You need to be authenticated!');
 
-//   if (res.headersSent) return;
+  const { userId } = req.session;
 
-//   res.status(500).json({
-//     success: false,
-//     message: 'An unexpected server error occurred.',
-//   });
-// });
+  const { newPassword } = req.body;
+
+  try {
+    const user = await User.findById(userId).exec();
+
+    const hashedPassword = await argon2.hash(newPassword);
+
+    user.hash = hashedPassword;
+
+    //! Send security alert
+
+    await user.save();
+
+    return res.send();
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
 
 app.listen(PORT, HOST, () => {
   console.log(`Server started!`);
 });
-
-// Graceful shutdown
-//! FIX
-// async function closeServer() {
-//   app.close(async () => {
-//     try {
-//       await shutdown();
-//       process.exit(0);
-//     } catch (error) {
-//       console.error('Shutdown error:', error);
-//       process.exit(1);
-//     }
-//   });
-// }
-
-// process.on('SIGINT', closeServer);
-// process.on('SIGTERM', closeServer);

@@ -1,6 +1,5 @@
 import { Schema, model } from 'mongoose';
 
-//! RENAME TO CHATS
 const conversationSchema = new Schema(
   {
     title: {
@@ -11,20 +10,13 @@ const conversationSchema = new Schema(
     user: {
       type: Schema.Types.ObjectId,
       ref: 'User',
-      default: '000000000000000000000000',
+      required: true,
     },
 
     pinned: {
       type: Boolean,
       default: false,
     },
-
-    guestSessionId: {
-      type: String,
-      //! USE cuid2 package to validate
-    },
-
-    messages: [{ role: String, text: String, timestamp: Date }],
   },
   {
     timestamps: true,

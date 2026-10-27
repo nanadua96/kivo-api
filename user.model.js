@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       unique: true,
       required: true,
+      //! ADD MORE RULES
     },
 
     hash: {
@@ -20,6 +21,14 @@ const userSchema = new mongoose.Schema(
       minLength: 1,
       maxLength: 256,
       required: true,
+    },
+
+    deletedAt: {
+      type: Date,
+    },
+
+    deletedUser: {
+      email: String,
     },
   },
   { timestamps: true },
