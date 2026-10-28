@@ -12,10 +12,15 @@ import MongoStore from 'connect-mongo';
 import { Conversation } from './conversation.model.js';
 import morgan from 'morgan';
 import { Message } from './message.model.js';
+import { Groq } from 'groq-sdk';
 
 const app = express();
 
 const ai = new GoogleGenAI({});
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
 
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
@@ -296,6 +301,19 @@ app.post('/api/chats', async (req, res) => {
         },
       ]);
 
+      ////////////////////////////////////////////////////////////////////////! TEST
+      let suggestions = [];
+
+      const input2 = [
+        ...input,
+        { type: 'model_output', content: [{ type: 'text', text: message }] },
+      ];
+
+      const interaction2 = await ai.interactions.create({ model, input });
+
+      const reply2 = interaction.output_text;
+      ////////////////////////////////////////////////////////////////////////! TEST
+
       return res.json({ role: 'assistant', content: reply });
     }
 
@@ -356,6 +374,153 @@ app.post('/api/chats', async (req, res) => {
         title,
         role: 'assistant',
         content: reply,
+      });
+    }
+  } catch (error) {
+    console.error(`[${req.url}] error:`, error);
+    return res.status(500).json({
+      statusCode: 500,
+      error: 'Internal Server Error',
+      message: 'Something went wrong.',
+    });
+  }
+});
+
+app.post('/api/test', async (req, res) => {
+  try {
+    const {
+      conversationId = 'new',
+      model,
+      message,
+      sessionHistory = [],
+    } = req.body;
+
+    let history = sessionHistory;
+
+    if (!message)
+      return res.status(400).json({ error: 'Message input is required' });
+
+    const userId = req.session.userId;
+
+    //! USE TRANSACTIONS
+
+    if (conversationId !== 'new') {
+      if (userId)
+        history = await Message.find({
+          conversation: conversationId,
+          user: userId,
+        })
+          .select({ _id: 0, role: 1, content: 1 })
+          .lean();
+
+      const messages = [...history, { role: 'user', content: message }];
+
+      const chatCompletion = await groq.chat.completions.create({
+        messages,
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
+
+      const reply = chatCompletion.choices[0]?.message?.content || '';
+
+      await Message.create([
+        {
+          role: 'user',
+          content: message,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+        {
+          role: 'assistant',
+          content: reply,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+      ]);
+
+      //! ADD SUGGESTIONS
+
+      return res.json({ role: 'assistant', content: reply });
+    }
+
+    if (conversationId === 'new') {
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [{ role: 'user', content: message }],
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
+
+      const reply = chatCompletion.choices[0]?.message?.content || '';
+
+      const chatCompletion2 = await groq.chat.completions.create({
+        messages: [
+          { role: 'user', content: message },
+          { role: 'assistant', content: reply },
+          {
+            role: 'user',
+            content:
+              "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version.",
+          },
+        ],
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
+
+      const title = chatCompletion2.choices[0]?.message?.content || '';
+
+      const createdConversation = await Conversation.create({
+        model,
+        title,
+        user: userId,
+      });
+
+      await Message.create([
+        {
+          content: message,
+          conversation: createdConversation._id,
+          role: 'user',
+          user: userId,
+          model,
+        },
+        {
+          content: reply,
+          conversation: createdConversation._id,
+          role: 'assistant',
+          user: userId,
+          model,
+        },
+      ]);
+
+      let suggestions = [];
+
+      const chatCompletion3 = await groq.chat.completions.create({
+        messages: [
+          { role: 'user', content: message },
+          { role: 'assistant', content: reply },
+          {
+            role: 'user',
+            content:
+              'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+          },
+        ],
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
+
+      const result = chatCompletion3.choices[0]?.message?.content;
+      suggestions = JSON.parse(result);
+
+      // console.log(JSON.parse(result));
+
+      return res.json({
+        chatId: createdConversation._id,
+        conversationId: createdConversation._id,
+        title,
+        role: 'assistant',
+        content: reply,
+        suggestions,
       });
     }
   } catch (error) {
