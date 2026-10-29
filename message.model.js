@@ -31,15 +31,9 @@ const messageSchema = new Schema(
       type: String,
     },
 
-    feedback: {
-      rating: {
-        type: String,
-        enum: ['up', 'down'],
-      },
-
-      updatedAt: {
-        type: Date,
-      },
+    rating: {
+      type: String,
+      enum: ['up', 'down'],
     },
 
     status: {

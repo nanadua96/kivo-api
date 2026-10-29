@@ -249,169 +249,64 @@ app.post('/api/chats', async (req, res) => {
       conversationId = 'new',
       model,
       message,
-      sessionHistory = [],
+      messages = [],
+      temporary = false,
     } = req.body;
-
-    let history = sessionHistory;
-
-    if (!message)
-      return res.status(400).json({ error: 'Message input is required' });
 
     const userId = req.session.userId;
 
-    //! USE TRANSACTIONS
+    //! UNAUTHED USER
+    if (!userId) {
+      const assistantResponses = messages.filter((i) => i.role === 'assistant');
 
-    if (conversationId !== 'new') {
-      if (userId)
-        history = await Message.find({
-          conversation: conversationId,
-          user: userId,
-        }).lean();
+      const UNAUTH_LIMIT = 3;
+      // console.log(assistantResponses);
 
-      const formattedHistory = history
-        ? history.map((entry) => ({
-            type: entry.role === 'assistant' ? 'model_output' : 'user_input',
-            content: [{ type: 'text', text: entry.content }],
-          }))
-        : [];
+      if (assistantResponses.length > UNAUTH_LIMIT)
+        return res.status(400).send('Limit reached! Sign in or sign up!');
 
-      const input = [
-        ...formattedHistory,
-        { type: 'user_input', content: [{ type: 'text', text: message }] },
-      ];
+      const chatCompletion = await groq.chat.completions.create({
+        messages,
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
 
-      const interaction = await ai.interactions.create({ model, input });
-
-      const reply = interaction.output_text;
-
-      await Message.create([
-        {
-          role: 'user',
-          content: message,
-          conversation: conversationId,
-          user: userId,
-          model,
-        },
-        {
-          role: 'assistant',
-          content: reply,
-          conversation: conversationId,
-          user: userId,
-          model,
-        },
-      ]);
-
-      ////////////////////////////////////////////////////////////////////////! TEST
-      let suggestions = [];
-
-      const input2 = [
-        ...input,
-        { type: 'model_output', content: [{ type: 'text', text: message }] },
-      ];
-
-      const interaction2 = await ai.interactions.create({ model, input });
-
-      const reply2 = interaction.output_text;
-      ////////////////////////////////////////////////////////////////////////! TEST
+      const reply = chatCompletion.choices[0]?.message?.content || '';
 
       return res.json({ role: 'assistant', content: reply });
     }
 
-    if (conversationId === 'new') {
-      const input = [
-        { type: 'user_input', content: [{ type: 'text', text: message }] },
-      ];
+    if (temporary) {
+      //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
+      if (!messages.length)
+        return res.send(
+          'Provide at least one message. Messages required for temporary',
+        );
 
-      const interaction = await ai.interactions.create({ model, input });
-
-      const reply = interaction.output_text;
-
-      // Get title
-      input.push({
-        type: 'model_output',
-        content: [{ type: 'text', text: message }],
+      const chatCompletion = await groq.chat.completions.create({
+        messages,
+        model: 'openai/gpt-oss-120b',
+        stream: false,
       });
 
-      input.push({
-        type: 'user_input',
-        content: [
-          {
-            type: 'text',
-            text: "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version.",
-          },
-        ],
-      });
+      const reply = chatCompletion.choices[0]?.message?.content || '';
 
-      const interaction1 = await ai.interactions.create({ model, input });
+      //! ADD SUGGESTIONS
 
-      const title = interaction1.output_text;
-
-      const createdConversation = await Conversation.create({
-        model,
-        title,
-        user: userId,
-      });
-
-      await Message.create([
-        {
-          content: message,
-          conversation: createdConversation._id,
-          role: 'user',
-          user: userId,
-          model,
-        },
-        {
-          content: reply,
-          conversation: createdConversation._id,
-          role: 'assistant',
-          user: userId,
-          model,
-        },
-      ]);
-
-      return res.json({
-        chatId: createdConversation._id,
-        title,
-        role: 'assistant',
-        content: reply,
-      });
+      return res.json({ role: 'assistant', content: reply });
     }
-  } catch (error) {
-    console.error(`[${req.url}] error:`, error);
-    return res.status(500).json({
-      statusCode: 500,
-      error: 'Internal Server Error',
-      message: 'Something went wrong.',
-    });
-  }
-});
-
-app.post('/api/test', async (req, res) => {
-  try {
-    const {
-      conversationId = 'new',
-      model,
-      message,
-      sessionHistory = [],
-    } = req.body;
-
-    let history = sessionHistory;
-
-    if (!message)
-      return res.status(400).json({ error: 'Message input is required' });
-
-    const userId = req.session.userId;
 
     //! USE TRANSACTIONS
+    if (!message && !temporary)
+      return res.status(400).json({ error: 'Message input is required' });
 
     if (conversationId !== 'new') {
-      if (userId)
-        history = await Message.find({
-          conversation: conversationId,
-          user: userId,
-        })
-          .select({ _id: 0, role: 1, content: 1 })
-          .lean();
+      const history = await Message.find({
+        conversation: conversationId,
+        user: userId,
+      })
+        .select({ _id: 0, role: 1, content: 1 })
+        .lean();
 
       const messages = [...history, { role: 'user', content: message }];
 
@@ -461,7 +356,8 @@ app.post('/api/test', async (req, res) => {
           {
             role: 'user',
             content:
-              "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. If you have multple choices, pick the shorter version.",
+              // "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. Return Plain text not markdown formatted. If you have multple choices, pick the shorter version.",
+              'Give this chat a casual title under 80 characters. Return plain text only, choosing the shortest option if there are multiple.',
           },
         ],
         model: 'openai/gpt-oss-120b',
@@ -469,6 +365,8 @@ app.post('/api/test', async (req, res) => {
       });
 
       const title = chatCompletion2.choices[0]?.message?.content || '';
+
+      // Store in db
 
       const createdConversation = await Conversation.create({
         model,
@@ -502,7 +400,8 @@ app.post('/api/test', async (req, res) => {
           {
             role: 'user',
             content:
-              'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+              // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+              "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
           },
         ],
         model: 'openai/gpt-oss-120b',
@@ -515,7 +414,6 @@ app.post('/api/test', async (req, res) => {
       // console.log(JSON.parse(result));
 
       return res.json({
-        chatId: createdConversation._id,
         conversationId: createdConversation._id,
         title,
         role: 'assistant',
@@ -569,7 +467,9 @@ app.get('/api/chats/:id/messages', async (req, res) => {
       _id: id,
       user: userId,
       status: 'active',
-    }).lean();
+    })
+
+      .lean();
 
     if (!isActive) return res.json([]);
 
@@ -578,6 +478,14 @@ app.get('/api/chats/:id/messages', async (req, res) => {
       user: userId,
     })
       .sort({ createdAt: 1 })
+      .select({
+        id: '$_id',
+        role: 1,
+        content: 1,
+        model: 1,
+        rating: 1,
+        createdAt: 1,
+      })
       .lean();
 
     return res.json(messages);
@@ -748,6 +656,8 @@ app.post('/api/messages/:id/feedback', async (req, res) => {
     const { userId } = req.session;
     const { rating } = req.body;
 
+    //! REMOVE IF ITS THE SAME
+
     const message = await Message.findOne({
       _id: id,
       user: userId,
@@ -756,8 +666,7 @@ app.post('/api/messages/:id/feedback', async (req, res) => {
 
     if (!message) return res.send('Not found!'); //! FIX
 
-    message.feedback.rating = rating;
-    message.feedback.updatedAt = Date.now();
+    message.rating = rating;
 
     await message.save();
 
@@ -772,14 +681,11 @@ app.post('/api/messages/:id/feedback', async (req, res) => {
   }
 });
 
-//! NO AUTH
 app.patch('/api/messages/:id/edit', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { model, message, createdAt, sessionHistory = [] } = req.body;
-
-    let history = sessionHistory;
+    const { model, message, messages = [] } = req.body;
 
     if (!message)
       return res.status(400).json({ error: 'Message input is required' });
@@ -789,65 +695,68 @@ app.patch('/api/messages/:id/edit', async (req, res) => {
     //! USE TRANSACTIONS
 
     if (userId) {
-      const msgs = await Message.find({
-        conversation: id,
+      const currentMessage = await Message.findOne({
+        _id: id,
         user: userId,
-        createdAt: { $lte: createdAt },
         role: 'user',
       }).lean();
 
-      if (!msgs) return res.send('NOT FOUND!!');
+      if (!currentMessage) return res.send('MESSAGE NOT FOUND!');
 
-      history = msgs;
+      const conversationId = currentMessage.conversation;
+
+      const history = await Message.find(
+        {
+          conversation: conversationId,
+          user: userId,
+          _id: { $lt: id },
+        },
+        'role content',
+      ).lean();
+
+      const mapped = history.map((i) => ({ role: i.role, content: i.content }));
+
+      // return res.json({ currentMessage, history, mapped });
+
+      const chatCompletion = await groq.chat.completions.create({
+        messages: [...mapped, { role: 'user', content: message }],
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
+
+      const reply = chatCompletion.choices[0]?.message?.content || '';
+
+      await Message.deleteMany({
+        conversation: conversationId,
+        user: userId,
+        _id: { $gte: id },
+      });
+
+      await Message.create([
+        {
+          role: 'user',
+          content: message,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+        {
+          role: 'assistant',
+          content: reply,
+          conversation: conversationId,
+          user: userId,
+          model,
+        },
+      ]);
+
+      return res.json({
+        role: 'assistant',
+        text: reply,
+        timestamp: new Date(),
+      });
     }
 
-    // return res.json(history);
-
-    // if (userId)
-    //   history = await Message.find({ conversation: id, user: userId }).lean();
-
-    const formattedHistory = history
-      ? history.map((entry) => ({
-          type: entry.role === 'assistant' ? 'model_output' : 'user_input',
-          content: [{ type: 'text', text: entry.content }],
-        }))
-      : [];
-
-    const input = [
-      ...formattedHistory,
-      { type: 'user_input', content: [{ type: 'text', text: message }] },
-    ];
-
-    const interaction = await ai.interactions.create({ model, input });
-
-    const reply = interaction.output_text;
-
-    await Message.deleteMany({
-      conversation: id,
-      user: userId,
-      createdAt: { $gte: createdAt },
-    });
-
-    await Message.create([
-      {
-        role: 'user',
-        content: message,
-        conversation: id,
-        user: userId,
-      },
-      {
-        role: 'assistant',
-        content: reply,
-        conversation: id,
-        user: userId,
-      },
-    ]);
-
-    return res.json({
-      role: 'assistant',
-      text: reply,
-      timestamp: new Date(),
-    });
+    return res.send('Hello world!');
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
@@ -862,93 +771,63 @@ app.post('/api/messages/:id/regenerate', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const { sessionHistory = [], conversationId } = req.body;
-
-    let history = sessionHistory;
-
-    let model = '';
-    let message = '';
-    let createdAt = '';
+    const { model, messages = [] } = req.body;
 
     const userId = req.session.userId;
 
     //! USE TRANSACTIONS
 
     if (userId) {
-      const msg = await Message.findOne({
+      const currentMessage = await Message.findOne({
         _id: id,
-        conversation: conversationId,
         user: userId,
         role: 'user',
       }).lean();
 
-      // console.log('LHLKHWEKWHEPOWUEPO', msg);
+      if (!currentMessage) return res.send('MESSAGE NOT FOUND!');
 
-      if (!msg) return res.send('NOT FOUND!!');
+      const conversationId = currentMessage.conversation;
 
-      // return res.send('');
-
-      model = msg.model;
-      message = msg.message;
-      createdAt = msg.createdAt;
-
-      history = await Message.find({
+      const history = await Message.find({
         conversation: conversationId,
         user: userId,
-        createdAt: { $lte: createdAt },
-        role: 'user',
+        _id: { $lte: id },
       }).lean();
-    }
 
-    // return res.json(history);
+      const mapped = history.map((i) => ({ role: i.role, content: i.content }));
 
-    // if (userId)
-    //   history = await Message.find({ conversation: id, user: userId }).lean();
+      // return res.json({ currentMessage, history, mapped }); // Debugging
 
-    const formattedHistory = history
-      ? history.map((i) => ({
-          type: i.role === 'assistant' ? 'model_output' : 'user_input',
-          content: [{ type: 'text', text: i.content }],
-        }))
-      : [];
+      const chatCompletion = await groq.chat.completions.create({
+        messages: mapped,
+        model: 'openai/gpt-oss-120b',
+        stream: false,
+      });
 
-    const input = [...formattedHistory];
+      const reply = chatCompletion.choices[0]?.message?.content || '';
 
-    // return res.json(input);
-
-    const interaction = await ai.interactions.create({
-      model,
-      input,
-    });
-
-    const reply = interaction.output_text;
-
-    await Message.deleteMany({
-      conversation: conversationId,
-      user: userId,
-      createdAt: { $gte: createdAt },
-    });
-
-    await Message.create([
-      {
-        role: 'user',
-        content: message,
+      await Message.deleteMany({
         conversation: conversationId,
         user: userId,
-      },
-      {
+        _id: { $gt: id },
+      });
+
+      await Message.create({
         role: 'assistant',
         content: reply,
         conversation: conversationId,
         user: userId,
-      },
-    ]);
+        model,
+      });
 
-    return res.json({
-      role: 'assistant',
-      text: reply,
-      timestamp: new Date(),
-    });
+      return res.json({
+        role: 'assistant',
+        content: reply,
+        // timestamp: new Date(),
+      });
+    }
+
+    return res.send('Hello world!');
   } catch (error) {
     console.error(`[${req.url}] error:`, error);
     return res.status(500).json({
