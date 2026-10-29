@@ -952,6 +952,65 @@ app.post('/api/users/change-password', async (req, res) => {
   }
 });
 
+//! TEST
+app.post('/api/chat/stream', async (req, res) => {
+  const { chatId, message } = req.body;
+
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  // 1. Set headers required for Server-Sent Events (SSE)
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  // Optional: Disable compression for proxies that buffer SSE streams
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  try {
+    // 2. Request streaming completion from Groq
+    const completionStream = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
+      messages: [{ role: 'user', content: message }],
+      stream: true,
+    });
+
+    let fullResponseText = '';
+
+    // 3. Iterate over async iterable chunks from Groq
+    for await (const chunk of completionStream) {
+      const delta = chunk.choices[0]?.delta?.content || '';
+      if (delta) {
+        fullResponseText += delta;
+        // Format as standard SSE data packet
+        res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+      }
+    }
+
+    // 4. Signal stream completion to the frontend
+    res.write('data: [DONE]\n\n');
+    res.end();
+
+    // 5. Save the complete accumulated response to MongoDB asynchronously
+    // await Message.create({
+    //   chatId: chatId || null,
+    //   role: 'assistant',
+    //   content: fullResponseText,
+    //   createdAt: new Date(),
+    // });
+  } catch (error) {
+    console.error('Groq streaming error:', error);
+    // If headers haven't been sent yet, send a standard JSON error
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate stream response' });
+    } else {
+      // If stream already started, push an error event down the pipe
+      res.write(`data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`);
+      res.end();
+    }
+  }
+});
+
 app.listen(PORT, HOST, () => {
   console.log(`Server started!`);
 });
