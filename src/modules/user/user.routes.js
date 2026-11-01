@@ -1,3 +1,4 @@
+import { authenticateUser } from '../auth/auth.hook.js';
 import { User } from './user.model.js';
 
 /**
@@ -38,26 +39,28 @@ export default async function (fastify, _, done) {
     },
   );
 
-  app.post('/api/users/deactivate', {}, async (request, reply) => {
-    // if (!req.session?.userId) return res.send('You need to be authenticated!');
+  fastify.post(
+    '/api/users/deactivate',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request, reply) => {
+      const user = await User.findById(userId).exec();
 
-    // const userId = req.session.userId;
+      if (!user) return reply.notFound('User not found.');
 
-    const user = await User.findById(userId).exec();
+      user.status = 'deactivated';
+      user.deletedAt = Date.now();
+      user.deletedUser.email = user.email;
 
-    if (!user) return reply.notFound('User not found.');
+      user.email = `deleted-${Math.random() * 1000}@kivo.com`; //! FIX
 
-    user.status = 'deactivated';
-    user.deletedAt = Date.now();
-    user.deletedUser.email = user.email;
+      await user.save();
 
-    user.email = `deleted-${Math.random() * 1000}@kivo.com`; //! FIX
-
-    await user.save();
-
-    // Log person out
-    await fastify.session.destroy();
-  });
+      // Log person out
+      await request.session.destroy();
+    },
+  );
 
   //   app.post('/api/users/change-email', async (req, res) => {
   //     if (!req.session?.userId) return res.send('You need to be authenticated!');

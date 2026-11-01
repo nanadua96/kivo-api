@@ -89,25 +89,6 @@ import { __DEV__ } from './src/constants/index.js';
   // fastify.addSchema(mongodbObjectIdSchema);
 
   // =================================
-  // HOOKS
-  // =================================
-  // Auth hook
-  fastify.addHook('preHandler', (request, reply, done) => {
-    console.log('🌈 URL', request.url);
-
-    const foo = ['/api/auth/login'];
-
-    if (foo.includes(request.url)) done();
-
-    if (!request.user.id) {
-      reply.code(401);
-      done(new Error('Please login'));
-    }
-
-    done();
-  });
-
-  // =================================
   // ROUTES
   // =================================
   fastify.get('/ping', (_, reply) => reply.send('pong'));
@@ -125,15 +106,20 @@ import { __DEV__ } from './src/constants/index.js';
   // );
 
   // =================================
+  // DECORATORS
+  // =================================
+  fastify.decorateRequest('userId', '');
+
+  // =================================
   // ERROR HANDLERS
   // =================================
-  // fastify.setNotFoundHandler(
-  //   { preHandler: fastify.rateLimit() },
-  //   (request, reply) =>
-  //     reply.notFound(
-  //       `The requested route ${request.method} ${request.url} does not exist.`,
-  //     ),
-  // );
+  fastify.setNotFoundHandler(
+    // { preHandler: fastify.rateLimit() },
+    (request, reply) =>
+      reply.notFound(
+        `The requested route ${request.method} ${request.url} does not exist.`,
+      ),
+  );
 
   fastify.setErrorHandler(function (error, request, reply) {
     const GENERIC_MESSAGE = __DEV__
