@@ -11,7 +11,6 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      unique: true,
       required: true,
       maxLength: 250,
       //! ADD MORE RULES
@@ -26,6 +25,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['active', 'deactivated'],
       default: 'active',
+    },
+
+    avatar: {
+      key: { type: String },
     },
 
     deletedAt: {

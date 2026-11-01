@@ -58,6 +58,8 @@ import { __DEV__ } from './src/constants/index.js';
 
   await fastify.register(import('@fastify/helmet'), { global: true });
 
+  await fastify.register(import('@fastify/multipart'));
+
   await fastify.register(import('@fastify/cookie'));
 
   fastify.register(import('@fastify/session'), {
@@ -102,7 +104,6 @@ import { __DEV__ } from './src/constants/index.js';
 
   fastify.register(import('./src/modules/auth/auth.routes.js'));
   fastify.register(import('./src/modules/user/user.routes.js'));
-  fastify.register(import('./src/modules/asset/asset.routes.js'));
 
   // fastify.register(
   //   import('./src/modules/auth/auth.routes.js', { prefix: '/api/v1/auth' }),

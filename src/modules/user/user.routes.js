@@ -1,4 +1,11 @@
+import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import argon2 from 'argon2';
+import sharp from 'sharp';
+import { s3 } from '../../config/s3.config.js';
+import {
+  createAssetKey,
+  resolveAssetUrl,
+} from '../../utilities/s3.utlities.js';
 import { authenticateUser } from '../auth/auth.hook.js';
 import { User } from './user.model.js';
 
@@ -174,113 +181,104 @@ export default function (fastify, _, done) {
   );
 
   fastify.post(
-    '/users/profile-picture/upload/complete',
+    '/api/v1/users/avatar',
     {
       preHandler: authenticateUser,
     },
     async (request, reply) => {
       const { userId } = request;
 
-      const avatar = request.body;
+      const data = await request.file({
+        limits: {
+          fields: 1,
+          fileSize: 5_000_000, // 5 MiB
+          files: 1,
+          parts: 1,
+        },
+      });
 
-      const session = await startSession();
+      if (!data) return reply.badRequest('Image is required');
 
       try {
-        session.startTransaction();
+        const buffer = await data.toBuffer();
 
-        const user = await User.findById(userId).session(session).exec();
+        // Resize and convert to WebP
+        const webpBuffer = await sharp(buffer)
+          .rotate()
+          .resize({
+            width: 800,
+            height: 800,
+          })
+          .webp({
+            quality: 75,
+          })
+          .toBuffer();
 
-        if (!user) return reply.notFound('User not found.');
+        const key = createAssetKey({ userId, extension: 'webp' });
 
-        const MAX_AVATAR_FILE_SIZE_BYTES = 1 * 1024 * 1024; // 1 MiB
-        const MIN_DIMENSION_PX = 200;
-        const MAX_DIMENSION_PX = 1000;
-        const ALLOWED_FORMATS = ['jpeg', 'png', 'webp'];
+        // Upload processed image to S3
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: process.env.STORAGE_BUCKET,
+            Key: key,
+            Body: webpBuffer,
+            ContentType: 'image/webp',
+          }),
+        );
 
-        // ==================================
-        // ASSET UPDATE
-        // ==================================
+        const user = await User.findById(userId).exec();
 
-        const { success, error, asset } = await completeUpload({
-          key: avatar.key,
-          userId,
-          docModel: 'User',
-          purpose: 'user_avatar',
-          attachedTo: userId,
-          fileType: 'image',
-          allowedFileTypes: ALLOWED_FORMATS,
-          session,
-          maxSizeBytes: MAX_AVATAR_FILE_SIZE_BYTES,
-          imageOptions: {
-            minWidth: MIN_DIMENSION_PX,
-            minHeight: MIN_DIMENSION_PX,
-            maxWidth: MAX_DIMENSION_PX,
-            maxHeight: MAX_DIMENSION_PX,
-          },
-        });
+        user.avatar.key = key;
 
-        if (!success) {
-          await session.abortTransaction();
-          return reply.badRequest(error);
-        }
+        await user.save();
 
-        // ==================================
-        // DOCUMENT UPDATE
-        // ==================================
-        user.avatar = { key: avatar.key, bucket: asset.bucket };
-        await user.save({ session });
-
-        // ==================================
-        // COMMIT
-        // ==================================
-        await session.commitTransaction();
-
-        return reply.send();
+        return reply.code(201).send({ url: resolveAssetUrl(key) });
       } catch (error) {
-        if (__DEV__) console.log(`[${request.url}] transaction failed:`, error);
-        await session.abortTransaction();
-        return reply.internalServerError('Something went wrong.');
-      } finally {
-        session.endSession();
+        console.log(`$[{request.url}] error:`);
+        console.error(error);
+        return reply.internalServerError('Image upload failed');
       }
     },
   );
 
-  // fastify.delete('/api/v1/users/profile-picture', {
-  //   preHandler: authenticateUser,
-  //   config: {
-  //     rateLimit: {
-  //       max: 10,
-  //       timeWindow: '1 hour',
-  //     },
-  //   },
-  //   schema: {
-  //     response: {
-  //       200: {
-  //         type: 'string',
-  //       },
-  //     },
-  //   },
-  //   async handler(request, reply) {
-  //     const userId = request.session.user.id;
+  fastify.delete('/api/v1/users/profile-picture', {
+    preHandler: authenticateUser,
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 hour',
+      },
+    },
+    schema: {
+      response: {
+        200: {
+          type: 'string',
+        },
+      },
+    },
+    async handler(request, reply) {
+      const userId = request.session.user.id;
 
-  //     const user = await User.findById(userId).exec();
+      const user = await User.findById(userId).exec();
 
-  //     if (!user) return reply.notFound('User not found.');
+      if (!user) return reply.notFound('User not found.');
 
-  //     if (!user.avatar) return reply.badRequest('No avatar found.');
+      if (!user.avatar) return reply.badRequest('No avatar found.');
 
-  //     const { success, error } = await deleteAsset([user.avatar.key], userId);
+      const command = new DeleteObjectCommand({
+        Bucket: process.env.STORAGE_BUCKET,
+        Key: user.avatar.key,
+      });
 
-  //     if (!success) return reply.badRequest(error);
+      await s3Client.send(command);
 
-  //     user.avatar = null;
+      user.avatar = undefined;
 
-  //     await user.save();
+      await user.save();
 
-  //     return reply.send();
-  //   },
-  // });
+      return reply.send();
+    },
+  });
 
   done();
 }
