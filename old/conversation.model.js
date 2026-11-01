@@ -5,6 +5,7 @@ const conversationSchema = new Schema(
     title: {
       type: String,
       maxLength: 100,
+      default: 'New chat',
     },
 
     user: {
