@@ -174,12 +174,12 @@ export default function (fastify, _, done) {
   );
 
   fastify.post(
-    '/users/avatar/upload/complete',
+    '/users/profile-picture/upload/complete',
     {
       preHandler: authenticateUser,
     },
     async (request, reply) => {
-      const userId = request.session.user.id;
+      const { userId } = request;
 
       const avatar = request.body;
 
@@ -192,25 +192,15 @@ export default function (fastify, _, done) {
 
         if (!user) return reply.notFound('User not found.');
 
-        const MAX_AVATAR_CHANGES = 2;
         const MAX_AVATAR_FILE_SIZE_BYTES = 1 * 1024 * 1024; // 1 MiB
         const MIN_DIMENSION_PX = 200;
         const MAX_DIMENSION_PX = 1000;
         const ALLOWED_FORMATS = ['jpeg', 'png', 'webp'];
 
-        // Check if user has crossed the limit
-        if (
-          user?.updateHistory?.avatar &&
-          isWithinLast30Days(user.updateHistory.avatar.updatedAt) &&
-          user.updateHistory.avatar.updateCount === MAX_AVATAR_CHANGES
-        )
-          return reply.badRequest(
-            'You have reached the limit of avatar changes.',
-          );
-
         // ==================================
         // ASSET UPDATE
         // ==================================
+
         const { success, error, asset } = await completeUpload({
           key: avatar.key,
           userId,
@@ -256,41 +246,41 @@ export default function (fastify, _, done) {
     },
   );
 
-  fastify.delete('/users/avatar', {
-    preHandler: authenticateUser,
-    config: {
-      rateLimit: {
-        max: 10,
-        timeWindow: '1 hour',
-      },
-    },
-    schema: {
-      response: {
-        200: {
-          type: 'string',
-        },
-      },
-    },
-    async handler(request, reply) {
-      const userId = request.session.user.id;
+  // fastify.delete('/api/v1/users/profile-picture', {
+  //   preHandler: authenticateUser,
+  //   config: {
+  //     rateLimit: {
+  //       max: 10,
+  //       timeWindow: '1 hour',
+  //     },
+  //   },
+  //   schema: {
+  //     response: {
+  //       200: {
+  //         type: 'string',
+  //       },
+  //     },
+  //   },
+  //   async handler(request, reply) {
+  //     const userId = request.session.user.id;
 
-      const user = await User.findById(userId).exec();
+  //     const user = await User.findById(userId).exec();
 
-      if (!user) return reply.notFound('User not found.');
+  //     if (!user) return reply.notFound('User not found.');
 
-      if (!user.avatar) return reply.badRequest('No avatar found.');
+  //     if (!user.avatar) return reply.badRequest('No avatar found.');
 
-      const { success, error } = await deleteAsset([user.avatar.key], userId);
+  //     const { success, error } = await deleteAsset([user.avatar.key], userId);
 
-      if (!success) return reply.badRequest(error);
+  //     if (!success) return reply.badRequest(error);
 
-      user.avatar = null;
+  //     user.avatar = null;
 
-      await user.save();
+  //     await user.save();
 
-      return reply.send();
-    },
-  });
+  //     return reply.send();
+  //   },
+  // });
 
   done();
 }

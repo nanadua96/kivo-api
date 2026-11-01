@@ -1,4 +1,5 @@
-import { authenticateUser } from '../auth/index.js';
+import { authenticateUser } from '../auth/auth.hook.js';
+import { createUploadUrls } from './asset.service.js';
 
 /**
  * @param {import('fastify').FastifyInstance} fastify
@@ -8,12 +9,12 @@ import { authenticateUser } from '../auth/index.js';
  */
 export default function (fastify, _, done) {
   fastify.post(
-    '/asset/presign',
+    '/api/v1/asset/presign',
     {
       preHandler: authenticateUser,
     },
     async (request, reply) => {
-      const { files } = request.body;
+      const files = request.body;
 
       const userId = request.session.user.id;
 
