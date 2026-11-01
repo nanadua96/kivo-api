@@ -173,5 +173,124 @@ export default function (fastify, _, done) {
     },
   );
 
+  fastify.post(
+    '/users/avatar/upload/complete',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request, reply) => {
+      const userId = request.session.user.id;
+
+      const avatar = request.body;
+
+      const session = await startSession();
+
+      try {
+        session.startTransaction();
+
+        const user = await User.findById(userId).session(session).exec();
+
+        if (!user) return reply.notFound('User not found.');
+
+        const MAX_AVATAR_CHANGES = 2;
+        const MAX_AVATAR_FILE_SIZE_BYTES = 1 * 1024 * 1024; // 1 MiB
+        const MIN_DIMENSION_PX = 200;
+        const MAX_DIMENSION_PX = 1000;
+        const ALLOWED_FORMATS = ['jpeg', 'png', 'webp'];
+
+        // Check if user has crossed the limit
+        if (
+          user?.updateHistory?.avatar &&
+          isWithinLast30Days(user.updateHistory.avatar.updatedAt) &&
+          user.updateHistory.avatar.updateCount === MAX_AVATAR_CHANGES
+        )
+          return reply.badRequest(
+            'You have reached the limit of avatar changes.',
+          );
+
+        // ==================================
+        // ASSET UPDATE
+        // ==================================
+        const { success, error, asset } = await completeUpload({
+          key: avatar.key,
+          userId,
+          docModel: 'User',
+          purpose: 'user_avatar',
+          attachedTo: userId,
+          fileType: 'image',
+          allowedFileTypes: ALLOWED_FORMATS,
+          session,
+          maxSizeBytes: MAX_AVATAR_FILE_SIZE_BYTES,
+          imageOptions: {
+            minWidth: MIN_DIMENSION_PX,
+            minHeight: MIN_DIMENSION_PX,
+            maxWidth: MAX_DIMENSION_PX,
+            maxHeight: MAX_DIMENSION_PX,
+          },
+        });
+
+        if (!success) {
+          await session.abortTransaction();
+          return reply.badRequest(error);
+        }
+
+        // ==================================
+        // DOCUMENT UPDATE
+        // ==================================
+        user.avatar = { key: avatar.key, bucket: asset.bucket };
+        await user.save({ session });
+
+        // ==================================
+        // COMMIT
+        // ==================================
+        await session.commitTransaction();
+
+        return reply.send();
+      } catch (error) {
+        if (__DEV__) console.log(`[${request.url}] transaction failed:`, error);
+        await session.abortTransaction();
+        return reply.internalServerError('Something went wrong.');
+      } finally {
+        session.endSession();
+      }
+    },
+  );
+
+  fastify.delete('/users/avatar', {
+    preHandler: authenticateUser,
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 hour',
+      },
+    },
+    schema: {
+      response: {
+        200: {
+          type: 'string',
+        },
+      },
+    },
+    async handler(request, reply) {
+      const userId = request.session.user.id;
+
+      const user = await User.findById(userId).exec();
+
+      if (!user) return reply.notFound('User not found.');
+
+      if (!user.avatar) return reply.badRequest('No avatar found.');
+
+      const { success, error } = await deleteAsset([user.avatar.key], userId);
+
+      if (!success) return reply.badRequest(error);
+
+      user.avatar = null;
+
+      await user.save();
+
+      return reply.send();
+    },
+  });
+
   done();
 }

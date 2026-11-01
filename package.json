@@ -9,6 +9,8 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.1",
@@ -26,6 +28,7 @@
     "mongoose": "^9.10.1",
     "mongoose-aggregate-paginate-v2": "^1.1.5",
     "nodemon": "^3.1.14",
+    "sharp": "^0.35.5",
     "validator": "^13.15.35"
   },
   "devDependencies": {
