@@ -1,18 +1,18 @@
-import express from 'express';
 import cors from 'cors';
+import express from 'express';
 import 'dotenv/config';
 import { GoogleGenAI } from '@google/genai';
-import helmet from 'helmet';
-import session from 'express-session';
-import z from 'zod';
 import argon2 from 'argon2';
-import mongoose from 'mongoose';
-import { User } from './user.model.js';
 import MongoStore from 'connect-mongo';
-import { Conversation } from './conversation.model.js';
-import morgan from 'morgan';
-import { Message } from './message.model.js';
+import session from 'express-session';
 import { Groq } from 'groq-sdk';
+import helmet from 'helmet';
+import mongoose from 'mongoose';
+import morgan from 'morgan';
+import z from 'zod';
+import { Conversation } from './conversation.model.js';
+import { Message } from './message.model.js';
+import { User } from './user.model.js';
 
 const app = express();
 
@@ -467,9 +467,7 @@ app.get('/api/chats/:id/messages', async (req, res) => {
       _id: id,
       user: userId,
       status: 'active',
-    })
-
-      .lean();
+    }).lean();
 
     if (!isActive) return res.json([]);
 

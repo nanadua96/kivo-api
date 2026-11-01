@@ -4,8 +4,8 @@ const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      minLength: 1,
-      maxLength: 100,
+      minLength: 2,
+      maxLength: 50,
       required: true,
     },
 
@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       unique: true,
       required: true,
+      maxLength: 254,
       //! ADD MORE RULES
     },
 
@@ -38,5 +39,7 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+userSchema.index({ email: 1 }, { unique: true });
 
 export const User = mongoose.model('User', userSchema);

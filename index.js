@@ -1,3 +1,4 @@
+import MongoStore from 'connect-mongo';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import { __DEV__ } from './src/constants/index.js';
@@ -64,14 +65,13 @@ import { __DEV__ } from './src/constants/index.js';
     saveUninitialized: false,
     rolling: true,
     cookie: {
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days //! ADJUST AS NEEDED, Change to 6 months
-      domain: process.env.NODE_ENV === 'production' ? 'wessey.com' : undefined,
+      maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
+      // domain: process.env.NODE_ENV === 'production' ? 'onrender.com' : undefined,
       secure: process.env.NODE_ENV === 'production',
     },
-    // store: new RedisStore({
-    //   client: redis,
-    //   prefix: 'sessions:user:',
-    // }),
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGODB_URI,
+    }),
   });
 
   await fastify.register(import('@fastify/sensible'));
@@ -89,9 +89,40 @@ import { __DEV__ } from './src/constants/index.js';
   // fastify.addSchema(mongodbObjectIdSchema);
 
   // =================================
+  // HOOKS
+  // =================================
+  // Auth hook
+  fastify.addHook('preHandler', (request, reply, done) => {
+    console.log('🌈 URL', request.url);
+
+    const foo = ['/api/auth/login'];
+
+    if (foo.includes(request.url)) done();
+
+    if (!request.user.id) {
+      reply.code(401);
+      done(new Error('Please login'));
+    }
+
+    done();
+  });
+
+  // =================================
   // ROUTES
   // =================================
-  // fastify.register(import('./src/modules/health/health.routes.js'));
+  fastify.get('/ping', (_, reply) => reply.send('pong'));
+
+  // fastify.register(import('./src/modules/auth/auth.routes.js'));
+
+  fastify.register(import('./src/modules/auth/auth.routes.js'));
+
+  // fastify.register(
+  //   import('./src/modules/auth/auth.routes.js', { prefix: '/api/v1/auth' }),
+  // );
+
+  // fastify.register(
+  //   import('./src/modules/user/user.routes.js', { prefix: '/api/v1/users' }),
+  // );
 
   // =================================
   // ERROR HANDLERS
