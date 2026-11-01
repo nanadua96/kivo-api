@@ -27,7 +27,7 @@ export default function (fastify, _, done) {
             email: {
               type: 'string',
               format: 'email',
-              maxLength: 254,
+              maxLength: 250,
             },
             password: {
               type: 'string',

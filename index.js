@@ -76,6 +76,11 @@ import { __DEV__ } from './src/constants/index.js';
 
   await fastify.register(import('@fastify/sensible'));
 
+  // =================================
+  // DECORATORS
+  // =================================
+  fastify.decorateRequest('userId', '');
+
   // await fastify.register(underPressure, {
   //   maxEventLoopDelay: 1000,
   //   maxHeapUsedBytes: 100000000,
@@ -96,6 +101,7 @@ import { __DEV__ } from './src/constants/index.js';
   // fastify.register(import('./src/modules/auth/auth.routes.js'));
 
   fastify.register(import('./src/modules/auth/auth.routes.js'));
+  fastify.register(import('./src/modules/user/user.routes.js'));
 
   // fastify.register(
   //   import('./src/modules/auth/auth.routes.js', { prefix: '/api/v1/auth' }),
@@ -104,11 +110,6 @@ import { __DEV__ } from './src/constants/index.js';
   // fastify.register(
   //   import('./src/modules/user/user.routes.js', { prefix: '/api/v1/users' }),
   // );
-
-  // =================================
-  // DECORATORS
-  // =================================
-  fastify.decorateRequest('userId', '');
 
   // =================================
   // ERROR HANDLERS

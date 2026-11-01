@@ -1,3 +1,4 @@
+import argon2 from 'argon2';
 import { authenticateUser } from '../auth/auth.hook.js';
 import { User } from './user.model.js';
 
@@ -7,53 +8,64 @@ import { User } from './user.model.js';
  * @param {() => void} done
  * @returns {void}
  */
-export default async function (fastify, _, done) {
+export default function (fastify, _, done) {
   fastify.patch(
-    '/api/users',
+    '/api/v1/users',
     {
+      preHandler: authenticateUser,
       schema: {
         body: {
           type: 'object',
+          required: ['name'],
+          additionalProperties: false,
           properties: {
-            name: { type: 'string' },
+            name: { type: 'string', minLength: 2, maxLength: 50 },
           },
+        },
+        response: {
+          200: { type: 'string' },
         },
       },
     },
     async (request, reply) => {
-      //   if (!req.session?.userId)
-      //     return res.send('You need to be authenticated!');
+      const { userId } = request;
 
-      const { name } = request.body; //! USE ZOD OR SCHEMA VALIDATOR
-      //   const userId = request.session.userId;
+      const { name } = request.body;
 
       const user = await User.findById(userId).exec();
 
-      if (!user) return reply.notFound('User not found.');
+      if (!user) return reply.notFound("We couldn't find your account.");
 
       if (user.name) user.name = name;
 
       await user.save();
 
-      return res.send();
+      return reply.send();
     },
   );
 
   fastify.post(
-    '/api/users/deactivate',
+    '/api/v1/users/deactivate',
     {
       preHandler: authenticateUser,
+      schema: {
+        response: {
+          200: { type: 'string' },
+        },
+      },
     },
     async (request, reply) => {
+      const { userId } = request;
+
       const user = await User.findById(userId).exec();
 
-      if (!user) return reply.notFound('User not found.');
+      if (!user) return reply.notFound("We couldn't find your account.");
 
       user.status = 'deactivated';
       user.deletedAt = Date.now();
       user.deletedUser.email = user.email;
 
-      user.email = `deleted-${Math.random() * 1000}@kivo.com`; //! FIX
+      user.email = `deleted-${Math.random() * 100_000}@kivo.com`;
 
       await user.save();
 
@@ -62,64 +74,104 @@ export default async function (fastify, _, done) {
     },
   );
 
-  //   app.post('/api/users/change-email', async (req, res) => {
-  //     if (!req.session?.userId) return res.send('You need to be authenticated!');
+  fastify.post(
+    '/api/v1/users/change-email',
+    {
+      preHandler: authenticateUser,
+      additionalProperties: false,
+      schema: {
+        body: {
+          type: 'object',
+          required: ['newEmail'],
+          properties: {
+            newEmail: { type: 'string', format: 'email' },
+          },
+        },
+        response: {
+          200: { type: 'string' },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request;
 
-  //     const { userId } = req.session;
-  //     const { newEmail } = req.body;
+      const { newEmail } = request.body;
 
-  //     try {
-  //       const user = await User.findById(userId).exec();
+      const user = await User.findById(userId).exec();
 
-  //       if (newEmail === user.email)
-  //         return res.status(400).send('duplicate email!');
+      user.email = newEmail;
 
-  //       user.email = newEmail;
+      await user.save();
 
-  //       //! HANDLE if email was found on another account
-  //       //! Send security alert
+      return reply.send();
+    },
+  );
 
-  //       await user.save();
+  fastify.post(
+    '/api/v1/users/change-password',
+    {
+      preHandler: authenticateUser,
+      schema: {
+        body: {
+          type: 'object',
+          required: ['currentPassword', 'newPassword'],
+          additionalProperties: false,
+          properties: {
+            currentPassword: {
+              type: 'string',
+              minLength: 8,
+              maxLength: 128,
+            },
+            newPassword: {
+              type: 'string',
+              minLength: 8,
+              maxLength: 128,
+            },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              message: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { userId } = request;
 
-  //       return res.send();
-  //     } catch (error) {
-  //       console.error(`[${req.url}] error:`, error);
-  //       return res.status(500).json({
-  //         statusCode: 500,
-  //         error: 'Internal Server Error',
-  //         message: 'Something went wrong.',
-  //       });
-  //     }
-  //   });
+      const { currentPassword, newPassword } = request.body;
 
-  //   app.post('/api/users/change-password', async (req, res) => {
-  //     if (!req.session?.userId) return res.send('You need to be authenticated!');
+      const user = await User.findById(userId).exec();
 
-  //     const { userId } = req.session;
+      if (!user) return reply.notFound('We couldn’t find your account.');
 
-  //     const { newPassword } = req.body;
+      if (currentPassword === newPassword)
+        return reply.badRequest(
+          'Your new password must be different from your current password',
+        );
 
-  //     try {
-  //       const user = await User.findById(userId).exec();
+      const isValidPassword = await argon2.verify(
+        user.passwordHash,
+        currentPassword,
+      );
 
-  //       const hashedPassword = await argon2.hash(newPassword);
+      if (!isValidPassword)
+        return reply.badRequest('Your current password is incorrect.');
 
-  //       user.hash = hashedPassword;
+      const hashedPassword = await argon2.hash(newPassword);
 
-  //       //! Send security alert
+      user.hash = hashedPassword;
 
-  //       await user.save();
+      //! Send security alert
 
-  //       return res.send();
-  //     } catch (error) {
-  //       console.error(`[${req.url}] error:`, error);
-  //       return res.status(500).json({
-  //         statusCode: 500,
-  //         error: 'Internal Server Error',
-  //         message: 'Something went wrong.',
-  //       });
-  //     }
-  //   });
+      await user.save();
+
+      return reply.send();
+    },
+  );
 
   done();
 }

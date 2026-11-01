@@ -13,20 +13,19 @@ const userSchema = new mongoose.Schema(
       type: String,
       unique: true,
       required: true,
-      maxLength: 254,
+      maxLength: 250,
       //! ADD MORE RULES
     },
 
     passwordHash: {
       type: String,
-      minLength: 1,
-      maxLength: 256,
       required: true,
     },
 
     status: {
       type: String,
       enum: ['active', 'deactivated'],
+      default: 'active',
     },
 
     deletedAt: {
