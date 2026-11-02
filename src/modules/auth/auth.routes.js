@@ -1,4 +1,5 @@
 import argon2 from 'argon2';
+import { resolveAssetUrl } from '../../utilities/s3.utlities.js';
 import { User } from '../user/user.model.js';
 import { createUser } from '../user/user.service.js';
 import { authenticateUser } from './auth.hook.js';
@@ -126,6 +127,7 @@ export default function (fastify, _, done) {
               id: { type: 'string' },
               email: { type: 'string', format: 'email' },
               name: { type: 'string' },
+              avatar: { type: 'string' },
             },
           },
         },
@@ -135,8 +137,10 @@ export default function (fastify, _, done) {
       const { userId } = request;
 
       const user = await User.findById(userId)
-        .select({ id: '$_id', _id: 0, email: 1, name: 1 })
+        .select({ id: '$_id', _id: 0, email: 1, name: 1, avatar: 1 })
         .lean();
+
+      if (user.avatar?.key) user.avatar = resolveAssetUrl(user.avatar?.key);
 
       return reply.send(user);
     },

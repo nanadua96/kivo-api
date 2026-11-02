@@ -180,7 +180,7 @@ export default function (fastify, _, done) {
     },
   );
 
-  fastify.post(
+  fastify.patch(
     '/api/v1/users/avatar',
     {
       preHandler: authenticateUser,
@@ -241,7 +241,7 @@ export default function (fastify, _, done) {
     },
   );
 
-  fastify.delete('/api/v1/users/profile-picture', {
+  fastify.delete('/api/v1/users/avatar', {
     preHandler: authenticateUser,
     config: {
       rateLimit: {
@@ -263,14 +263,14 @@ export default function (fastify, _, done) {
 
       if (!user) return reply.notFound('User not found.');
 
-      if (!user.avatar) return reply.badRequest('No avatar found.');
+      if (!user.avatar?.key) return reply.badRequest('No avatar found.');
 
       const command = new DeleteObjectCommand({
         Bucket: process.env.STORAGE_BUCKET,
         Key: user.avatar.key,
       });
 
-      await s3Client.send(command);
+      await s3.send(command);
 
       user.avatar = undefined;
 

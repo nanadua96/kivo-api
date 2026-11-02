@@ -1,9 +1,10 @@
+import 'dotenv/config';
 import MongoStore from 'connect-mongo';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import { __DEV__ } from './src/constants/index.js';
 
-(async function buildApp() {
+(async () => {
   // =================================
   // FASTIFY INSTANCE
   // =================================
@@ -24,7 +25,7 @@ import { __DEV__ } from './src/constants/index.js';
       fastify.log.info('Connected to MongoDB.');
     })
     .catch((error) => {
-      fastify.log.error('MongoDB connection error');
+      fastify.log.error('MongoDB connection error:');
       console.error(error);
       process.exit(1);
     });
@@ -32,23 +33,16 @@ import { __DEV__ } from './src/constants/index.js';
   // =================================
   // PLUGINS
   // =================================
-  // await fastify.register(import('@fastify/redis'), {
-  //   client: redisClient,
-  //   closeClient: true,
-  // });
-
-  // await fastify.register(import('@fastify/rate-limit'), {
-  //   global: true,
-  //   max: 100,
-  //   timeWindow: '1m',
-  //   redis: redisClient,
-  //   nameSpace: 'rate-limit:',
-  //   skipOnError: true,
-  //   keyGenerator: (request) =>
-  //     request.headers['x-real-ip'] || // nginx
-  //     request.session?.user?.id || // Limit based on user id value
-  //     request.ip, // fallback to default
-  // });
+  await fastify.register(import('@fastify/rate-limit'), {
+    global: true,
+    max: 100,
+    timeWindow: '1m',
+    skipOnError: true,
+    keyGenerator: (request) =>
+      request.headers['x-real-ip'] || // nginx
+      request.session?.user?.id || // Limit based on user id value
+      request.ip, // fallback to default
+  });
 
   await fastify.register(import('@fastify/cors'), {
     credentials: true,
@@ -83,13 +77,6 @@ import { __DEV__ } from './src/constants/index.js';
   // =================================
   fastify.decorateRequest('userId', '');
 
-  // await fastify.register(underPressure, {
-  //   maxEventLoopDelay: 1000,
-  //   maxHeapUsedBytes: 100000000,
-  //   maxRssBytes: 100000000,
-  //   maxEventLoopUtilization: 0.98,
-  // });
-
   // =================================
   // SCHEMAS
   // =================================
@@ -99,9 +86,6 @@ import { __DEV__ } from './src/constants/index.js';
   // ROUTES
   // =================================
   fastify.get('/ping', (_, reply) => reply.send('pong'));
-
-  // fastify.register(import('./src/modules/auth/auth.routes.js'));
-
   fastify.register(import('./src/modules/auth/auth.routes.js'));
   fastify.register(import('./src/modules/user/user.routes.js'));
 
@@ -117,14 +101,14 @@ import { __DEV__ } from './src/constants/index.js';
   // ERROR HANDLERS
   // =================================
   fastify.setNotFoundHandler(
-    // { preHandler: fastify.rateLimit() },
+    { preHandler: fastify.rateLimit() },
     (request, reply) =>
       reply.notFound(
         `The requested route ${request.method} ${request.url} does not exist.`,
       ),
   );
 
-  fastify.setErrorHandler(function (error, request, reply) {
+  fastify.setErrorHandler(function (error, _, reply) {
     const GENERIC_MESSAGE = __DEV__
       ? 'Something went wrong. Check console for details.'
       : 'Something went wrong. Please try again later.';
@@ -185,11 +169,6 @@ import { __DEV__ } from './src/constants/index.js';
   // =================================
   // APP HOOKS
   // =================================
-
-  fastify.addHook('onReady', function () {
-    //
-  });
-
   fastify.addHook('onClose', async (fastify, done) => {
     await mongoose.connection.close();
     fastify.log.info('MongoDB connection closed.');
