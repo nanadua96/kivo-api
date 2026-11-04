@@ -1,12 +1,21 @@
+import { fromNodeHeaders } from 'better-auth/node';
+import { auth } from '../../lib/auth.js';
+
 export function authenticateUser(request, reply, done) {
-  if (!request.session.user) {
-    reply.code(401);
-    done(new Error('Authentication required. Please sign in to continue.'));
-    return;
-  }
+  auth.api
+    .getSession({
+      headers: fromNodeHeaders(request.headers),
+    })
+    .then((session) => {
+      if (!session) {
+        reply.code(401);
+        done(new Error('Authentication required. Please sign in to continue.'));
+        return;
+      }
 
-  // Decorate request
-  request.userId = request.session.user.id;
+      // Decorate request
+      request.userId = session.user.id;
 
-  done();
+      done();
+    });
 }

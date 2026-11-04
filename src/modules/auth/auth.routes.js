@@ -1,8 +1,5 @@
-import argon2 from 'argon2';
-import { resolveAssetUrl } from '../../utilities/s3.utlities.js';
-import { User } from '../user/user.model.js';
-import { createUser } from '../user/user.service.js';
-import { authenticateUser } from './auth.hook.js';
+import { fromNodeHeaders } from 'better-auth/node';
+import { auth } from '../../lib/auth.js';
 
 /**
  * @param {import('fastify').FastifyInstance} fastify
@@ -11,140 +8,36 @@ import { authenticateUser } from './auth.hook.js';
  * @returns {void}
  */
 export default function (fastify, _, done) {
-  fastify.post(
-    '/api/v1/auth/signup',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          required: ['name', 'email', 'password'],
-          additionalProperties: false,
-          properties: {
-            name: {
-              type: 'string',
-              minLength: 2,
-              maxLength: 50,
-            },
-            email: {
-              type: 'string',
-              format: 'email',
-              maxLength: 250,
-            },
-            password: {
-              type: 'string',
-              // minLength: 8,
-              maxLength: 128,
-            },
-          },
-        },
-        response: {
-          201: { type: 'string' },
-        },
-      },
+  // See: https://better-auth.com/docs/integrations/fastify#authentication-handler-setup
+  fastify.route({
+    method: ['GET', 'POST'],
+    url: '/api/auth/*',
+    async handler(request, reply) {
+      try {
+        const url = new URL(request.url, `http://${request.headers.host}`);
+
+        const headers = fromNodeHeaders(request.headers);
+
+        const req = new Request(url.toString(), {
+          method: request.method,
+          headers,
+          ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+        });
+
+        const response = await auth.handler(req);
+
+        reply.status(response.status);
+
+        response.headers.forEach((value, key) => reply.header(key, value));
+
+        return reply.send(response.body ? await response.text() : null);
+      } catch (error) {
+        fastify.log.error('[better-auth] Authentication Error:');
+        console.log(error);
+        return reply.internalServerError('Internal authentication error');
+      }
     },
-    async (request, reply) => {
-      const user = await createUser(request.body);
-
-      request.session.user = { id: user._id };
-
-      return reply.code(201).send();
-    },
-  );
-
-  fastify.post(
-    '/api/v1/auth/login',
-    {
-      schema: {
-        body: {
-          type: 'object',
-          required: ['email', 'password'],
-          additionalProperties: false,
-          properties: {
-            email: {
-              type: 'string',
-              format: 'email',
-              maxLength: 254,
-            },
-            password: {
-              type: 'string',
-              // minLength: 8,
-              maxLength: 128,
-            },
-          },
-        },
-        response: {
-          200: {
-            type: 'string',
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { email, password } = request.body;
-
-      const user = await User.findOne({ email }).lean();
-
-      if (!user) return reply.badRequest('Invalid email or password.');
-
-      const isValidPassword = await argon2.verify(user.passwordHash, password);
-
-      if (!isValidPassword)
-        return reply.badRequest('Invalid email or password.');
-
-      request.session.user = { id: user._id };
-
-      return reply.send();
-    },
-  );
-
-  fastify.get(
-    '/api/v1/auth/logout',
-    {
-      schema: {
-        response: {
-          200: {
-            type: 'string',
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      await request.session.destroy();
-      return reply.send();
-    },
-  );
-
-  fastify.get(
-    '/api/v1/auth/me',
-    {
-      preHandler: authenticateUser,
-      schema: {
-        response: {
-          200: {
-            type: 'object',
-            required: ['email', 'name', 'id'],
-            properties: {
-              id: { type: 'string' },
-              email: { type: 'string', format: 'email' },
-              name: { type: 'string' },
-              avatar: { type: 'string' },
-            },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const { userId } = request;
-
-      const user = await User.findById(userId)
-        .select({ id: '$_id', _id: 0, email: 1, name: 1, avatar: 1 })
-        .lean();
-
-      if (user.avatar?.key) user.avatar = resolveAssetUrl(user.avatar?.key);
-
-      return reply.send(user);
-    },
-  );
+  });
 
   done();
 }

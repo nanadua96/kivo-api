@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1161.0",
+    "@better-auth/mongo-adapter": "^1.7.16",
     "@fastify/cookie": "^11.1.5",
     "@fastify/cors": "^11.3.1",
     "@fastify/helmet": "^13.2.0",
@@ -17,19 +18,21 @@
     "@fastify/one-line-logger": "^2.2.1",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/sensible": "^6.0.7",
-    "@fastify/session": "^11.1.6",
+    "@fastify/session": "^11.1.3",
     "@paralleldrive/cuid2": "^3.3.0",
     "argon2": "^0.45.1",
+    "better-auth": "^1.7.16",
     "connect-mongo": "^6.0.0",
-    "dotenv": "^17.4.2",
     "fastify": "^5.12.7",
+    "mongodb": "^7.8.0",
     "mongoose": "^9.11.4",
     "mongoose-aggregate-paginate-v2": "^1.1.5",
-    "nodemon": "^3.1.14",
     "sharp": "^0.35.5",
     "validator": "^13.15.35"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.6.4"
+    "@biomejs/biome": "^2.6.4",
+    "dotenv": "^17.4.2",
+    "nodemon": "^3.1.14"
   }
 }

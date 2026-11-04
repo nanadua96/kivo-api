@@ -1,8 +1,11 @@
 import 'dotenv/config';
+import { fromNodeHeaders } from 'better-auth/node';
 import MongoStore from 'connect-mongo';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import { __DEV__ } from './src/constants/index.js';
+import { auth } from './src/lib/auth.js';
+import { authenticateUser } from './src/modules/auth/auth.hook.js';
 
 (async () => {
   // =================================
@@ -45,9 +48,11 @@ import { __DEV__ } from './src/constants/index.js';
   });
 
   await fastify.register(import('@fastify/cors'), {
+    origin: process.env.CLIENT_ORIGIN || 'http://127.0.0.1:3000',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    origin: ['http://127.0.0.1:3000', 'http://192.168.100.4:8081'],
+    maxAge: 86400,
   });
 
   await fastify.register(import('@fastify/helmet'), { global: true });
@@ -88,6 +93,78 @@ import { __DEV__ } from './src/constants/index.js';
   fastify.get('/ping', (_, reply) => reply.send('pong'));
   fastify.register(import('./src/modules/auth/auth.routes.js'));
   fastify.register(import('./src/modules/user/user.routes.js'));
+
+  // See: https://better-auth.com/docs/integrations/fastify#authentication-handler-setup
+  // fastify.route({
+  //   method: ['GET', 'POST'],
+  //   url: '/api/auth/*',
+  //   async handler(request, reply) {
+  //     try {
+  //       const url = new URL(request.url, `http://${request.headers.host}`);
+
+  //       const headers = fromNodeHeaders(request.headers);
+
+  //       const req = new Request(url.toString(), {
+  //         method: request.method,
+  //         headers,
+  //         ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+  //       });
+
+  //       const response = await auth.handler(req);
+
+  //       reply.status(response.status);
+
+  //       response.headers.forEach((value, key) => reply.header(key, value));
+
+  //       return reply.send(response.body ? await response.text() : null);
+  //     } catch (error) {
+  //       fastify.log.error('[better-auth] Authentication Error:');
+  //       console.log(error);
+  //       return reply.internalServerError('Internal authentication error');
+  //     }
+  //   },
+  // });
+
+  //   import { fromNodeHeaders } from "better-auth/node";
+  // import { auth } from "./auth"; // Your Better Auth instance
+
+  // fastify.get('/api/me', async (request, reply) => {
+  //   const session = await auth.api.getSession({
+  //     headers: fromNodeHeaders(request.headers),
+  //   });
+
+  //   if (!session) {
+  //     return reply.status(401).send({ error: 'Unauthorized' });
+  //   }
+
+  //   return reply.send(session);
+  // });
+
+  // fastify.get(
+  //   '/api/protected',
+  //   { preHandler: authenticateUser },
+  //   async (request, reply) => {
+  //     const session = await auth.api.getSession({
+  //       headers: fromNodeHeaders(request.headers),
+  //     });
+
+  //     if (!session) {
+  //       return reply.status(401).send({ error: 'Unauthorized' });
+  //     }
+
+  //     return reply.send(session);
+  //   },
+  // );
+
+  // fastify.get(
+  //   '/api/edit',
+  //   { preHandler: authenticateUser },
+  //   async (request, reply) => {
+  //     const { username } = request.body;
+
+  //     return reply.send(session);
+  //   },
+  // );
 
   // fastify.register(
   //   import('./src/modules/auth/auth.routes.js', { prefix: '/api/v1/auth' }),
