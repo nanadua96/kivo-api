@@ -7,173 +7,199 @@ import { User } from '../user/user.model.js';
  * @returns {void}
  */
 export default async function (fastify, _, done) {
-  app.post('/api/register', async (req, res) => {
+  app.post('/api/messages/:id/feedback', async (req, res) => {
+    if (!req.session?.userId) return res.send('You need to be authenticated!');
+
     try {
-      const schema = z.object({
-        name: z.string(),
-        password: z.string(),
-        email: z.email(),
-        guestSessionId: z.string().optional(),
-      });
-
-      const { data, success } = schema.safeParse(req.body);
-
-      if (!success)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid credentials.',
-        });
-
-      const exist = await User.exists({ email: data.email });
-
-      if (exist)
-        return res.status(409).json({
-          statusCode: 409,
-          error: 'Conflict',
-          message: 'Account already exists.',
-        });
-
-      const hashedPassword = await argon2.hash(data.password);
-
-      const createdUser = await User.create({
-        name: data.name,
-        hash: hashedPassword,
-        email: data.email,
-      });
-
-      req.session.userId = createdUser._id;
-
-      // Check if user has unsaved conversation
-      if (data.guestSessionId) {
-        const conversation = await Conversation.findOne({
-          guestSessionId: data.guestSessionId,
-        }).exec();
-
-        if (conversation) {
-          conversation.user = createdUser._id;
-          conversation.guestSessionId = undefined;
-          await conversation.save();
-        }
-      }
-
-      return res.status(201).send();
-    } catch (error) {
-      console.error(`[${req.url}] error:`, error);
-      return res.status(500).json({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message: 'Something went wrong.',
-      });
-    }
-  });
-
-  app.post('/api/login', async (req, res) => {
-    try {
-      const loginSchema = z.object({
-        email: z.email(),
-        password: z.string(),
-        guestSessionId: z.string().optional(),
-      });
-
-      const { success, data } = loginSchema.safeParse(req.body);
-
-      if (!success)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Please provide a valid email address and password.',
-        });
-
-      const user = await User.findOne({ email: data.email }).lean();
-
-      if (!user)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid email or password.',
-        });
-
-      const isValidPassword = await argon2.verify(user.hash, data.password);
-
-      if (!isValidPassword)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid email or password.',
-        });
-
-      req.session.userId = user._id;
-
-      // Check if user has unsaved conversation
-      // if (data.guestSessionId) {
-      //   const conversation = await Conversation.findOne({
-      //     guestSessionId: data.guestSessionId,
-      //   }).exec();
-
-      //   if (conversation) {
-      //     conversation.user = user._id;
-      //     conversation.guestSessionId = undefined;
-      //     await conversation.save();
-      //   }
-      // }
-
-      return res.send();
-    } catch (error) {
-      console.error(`[${req.url}] error:`, error);
-      return res.status(500).json({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message: 'Something went wrong.',
-      });
-    }
-  });
-
-  app.get('/api/logout', async (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('Session destruction failed:', err);
-        return res.status(500).json({ message: 'Logout failed' });
-      }
-
-      return res.send();
-    });
-  });
-
-  function errorResponse({ code = 500, message = 'Something went wrong' }) {
-    let error = 'Internal Server Error';
-
-    if (code === 401) error = 'Unauthorized';
-
-    return {
-      statusCode: code,
-      error,
-      message,
-    };
-  }
-
-  app.get('/api/me', async (req, res) => {
-    try {
-      if (!req.session?.userId)
-        return res.status(401).json(
-          errorResponse({
-            code: 401,
-            message: 'You need to be authenticated to access this route.',
-          }),
-        );
-
+      const { id } = req.params;
       const { userId } = req.session;
+      const { rating } = req.body;
 
-      const user = await User.findById(userId)
-        .select({ email: 1, name: 1 })
-        .lean();
+      //! REMOVE IF ITS THE SAME
 
-      if (!user) return res.send('User not found!');
+      const message = await Message.findOne({
+        _id: id,
+        user: userId,
+        role: 'assistant',
+      }).exec();
 
-      return res.send(user);
+      if (!message) return res.send('Not found!'); //! FIX
+
+      message.rating = rating;
+
+      await message.save();
+
+      return res.json();
     } catch (error) {
-      console.log(error);
-      return res.status(500).json({ message: 'Error!' });
+      console.error(`[${req.url}] error:`, error);
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Something went wrong.',
+      });
+    }
+  });
+
+  app.patch('/api/messages/:id/edit', async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const { model, message, messages = [] } = req.body;
+
+      if (!message)
+        return res.status(400).json({ error: 'Message input is required' });
+
+      const userId = req.session.userId;
+
+      //! USE TRANSACTIONS
+
+      if (userId) {
+        const currentMessage = await Message.findOne({
+          _id: id,
+          user: userId,
+          role: 'user',
+        }).lean();
+
+        if (!currentMessage) return res.send('MESSAGE NOT FOUND!');
+
+        const conversationId = currentMessage.conversation;
+
+        const history = await Message.find(
+          {
+            conversation: conversationId,
+            user: userId,
+            _id: { $lt: id },
+          },
+          'role content',
+        ).lean();
+
+        const mapped = history.map((i) => ({
+          role: i.role,
+          content: i.content,
+        }));
+
+        // return res.json({ currentMessage, history, mapped });
+
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [...mapped, { role: 'user', content: message }],
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const reply = chatCompletion.choices[0]?.message?.content || '';
+
+        await Message.deleteMany({
+          conversation: conversationId,
+          user: userId,
+          _id: { $gte: id },
+        });
+
+        await Message.create([
+          {
+            role: 'user',
+            content: message,
+            conversation: conversationId,
+            user: userId,
+            model,
+          },
+          {
+            role: 'assistant',
+            content: reply,
+            conversation: conversationId,
+            user: userId,
+            model,
+          },
+        ]);
+
+        return res.json({
+          role: 'assistant',
+          text: reply,
+          timestamp: new Date(),
+        });
+      }
+
+      return res.send('Hello world!');
+    } catch (error) {
+      console.error(`[${req.url}] error:`, error);
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Something went wrong.',
+      });
+    }
+  });
+
+  app.post('/api/messages/:id/regenerate', async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const { model, messages = [] } = req.body;
+
+      const userId = req.session.userId;
+
+      //! USE TRANSACTIONS
+
+      if (userId) {
+        const currentMessage = await Message.findOne({
+          _id: id,
+          user: userId,
+          role: 'user',
+        }).lean();
+
+        if (!currentMessage) return res.send('MESSAGE NOT FOUND!');
+
+        const conversationId = currentMessage.conversation;
+
+        const history = await Message.find({
+          conversation: conversationId,
+          user: userId,
+          _id: { $lte: id },
+        }).lean();
+
+        const mapped = history.map((i) => ({
+          role: i.role,
+          content: i.content,
+        }));
+
+        // return res.json({ currentMessage, history, mapped }); // Debugging
+
+        const chatCompletion = await groq.chat.completions.create({
+          messages: mapped,
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const reply = chatCompletion.choices[0]?.message?.content || '';
+
+        await Message.deleteMany({
+          conversation: conversationId,
+          user: userId,
+          _id: { $gt: id },
+        });
+
+        await Message.create({
+          role: 'assistant',
+          content: reply,
+          conversation: conversationId,
+          user: userId,
+          model,
+        });
+
+        return res.json({
+          role: 'assistant',
+          content: reply,
+          // timestamp: new Date(),
+        });
+      }
+
+      return res.send('Hello world!');
+    } catch (error) {
+      console.error(`[${req.url}] error:`, error);
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Something went wrong.',
+      });
     }
   });
 

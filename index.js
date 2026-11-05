@@ -81,7 +81,7 @@ import { __DEV__ } from './src/constants/index.js';
   // =================================
   // DECORATORS
   // =================================
-  // fastify.decorateRequest('userId', '');
+  fastify.decorateRequest('userId', '');
 
   // =================================
   // SCHEMAS
@@ -94,6 +94,7 @@ import { __DEV__ } from './src/constants/index.js';
   fastify.get('/ping', (_, reply) => reply.send('pong'));
   fastify.register(import('./src/modules/auth/auth.routes.js'));
   fastify.register(import('./src/modules/user/user.routes.js'));
+  fastify.register(import('./src/modules/conversation/conversation.routes.js'));
 
   // =================================
   // ERROR HANDLERS

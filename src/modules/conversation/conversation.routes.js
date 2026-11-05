@@ -1,4 +1,7 @@
-import { User } from '../user/user.model.js';
+import { groq } from '../../lib/index.js';
+import { authenticateUser } from '../auth/auth.hook.js';
+import { Message } from '../message/message.model.js';
+import { Conversation } from './conversation.model.js';
 
 /**
  * @param {import('fastify').FastifyInstance} fastify
@@ -6,174 +9,401 @@ import { User } from '../user/user.model.js';
  * @param {() => void} done
  * @returns {void}
  */
-export default async function (fastify, _, done) {
-  app.post('/api/register', async (req, res) => {
+export default function (fastify, _, done) {
+  fastify.post('/api/v1/conversations', async (request, reply) => {
     try {
-      const schema = z.object({
-        name: z.string(),
-        password: z.string(),
-        email: z.email(),
-        guestSessionId: z.string().optional(),
-      });
+      const {
+        conversationId = 'new',
+        model,
+        message,
+        messages = [],
+        temporary = false,
+      } = request.body;
 
-      const { data, success } = schema.safeParse(req.body);
+      const { userId } = request;
 
-      if (!success)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid credentials.',
+      //! UNAUTHED USER
+      if (!userId) {
+        const assistantResponses = messages.filter(
+          (i) => i.role === 'assistant',
+        );
+
+        const UNAUTH_LIMIT = 3;
+        // console.log(assistantResponses);
+
+        if (assistantResponses.length > UNAUTH_LIMIT)
+          return reply.badRequest('Limit reached! Sign in or sign up!');
+
+        const chatCompletion = await groq.chat.completions.create({
+          messages,
+          model: 'openai/gpt-oss-120b',
+          stream: false,
         });
 
-      const exist = await User.exists({ email: data.email });
+        const assistantReply =
+          chatCompletion.choices[0]?.message?.content || '';
 
-      if (exist)
-        return res.status(409).json({
-          statusCode: 409,
-          error: 'Conflict',
-          message: 'Account already exists.',
+        return reply.send({ role: 'assistant', content: assistantReply });
+      }
+
+      if (temporary) {
+        //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
+        if (!messages.length)
+          return reply.badRequest(
+            'Provide at least one message. Messages required for temporary',
+          );
+
+        const chatCompletion = await groq.chat.completions.create({
+          messages,
+          model: 'openai/gpt-oss-120b',
+          stream: false,
         });
 
-      const hashedPassword = await argon2.hash(data.password);
+        const assistantReply =
+          chatCompletion.choices[0]?.message?.content || '';
 
-      const createdUser = await User.create({
-        name: data.name,
-        hash: hashedPassword,
-        email: data.email,
+        //! ADD SUGGESTIONS
+
+        return res.json({ role: 'assistant', content: assistantReply });
+      }
+
+      //! USE TRANSACTIONS
+      if (!message && !temporary)
+        return reply.badRequest('Message input is required');
+
+      if (conversationId !== 'new') {
+        const history = await Message.find({
+          conversation: conversationId,
+          user: userId,
+        })
+          .select({ _id: 0, role: 1, content: 1 })
+          .lean();
+
+        const messages = [...history, { role: 'user', content: message }];
+
+        const chatCompletion = await groq.chat.completions.create({
+          messages,
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const assistantReply =
+          chatCompletion.choices[0]?.message?.content || '';
+
+        await Message.create([
+          {
+            role: 'user',
+            content: message,
+            conversation: conversationId,
+            user: userId,
+            model,
+          },
+          {
+            role: 'assistant',
+            content: assistantReply,
+            conversation: conversationId,
+            user: userId,
+            model,
+          },
+        ]);
+
+        //! ADD SUGGESTIONS
+
+        return reply.send({
+          role: 'assistant',
+          content: assistantReply,
+        });
+      }
+
+      if (conversationId === 'new') {
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [{ role: 'user', content: message }],
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const assistantReply =
+          chatCompletion.choices[0]?.message?.content || '';
+
+        const chatCompletion2 = await groq.chat.completions.create({
+          messages: [
+            { role: 'user', content: message },
+            { role: 'assistant', content: assistantReply },
+            {
+              role: 'user',
+              content:
+                // "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. Return Plain text not markdown formatted. If you have multple choices, pick the shorter version.",
+                'Give this chat a casual title under 80 characters. Return plain text only, choosing the shortest option if there are multiple.',
+            },
+          ],
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const title = chatCompletion2.choices[0]?.message?.content || '';
+
+        // Store in db
+        const createdConversation = await Conversation.create({
+          model,
+          title,
+          user: userId,
+        });
+
+        await Message.create([
+          {
+            content: message,
+            conversation: createdConversation._id,
+            role: 'user',
+            user: userId,
+            model,
+          },
+          {
+            content: assistantReply,
+            conversation: createdConversation._id,
+            role: 'assistant',
+            user: userId,
+            model,
+          },
+        ]);
+
+        let suggestions = [];
+
+        const chatCompletion3 = await groq.chat.completions.create({
+          messages: [
+            { role: 'user', content: message },
+            { role: 'assistant', content: assistantReply },
+            {
+              role: 'user',
+              content:
+                // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+                "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
+            },
+          ],
+          model: 'openai/gpt-oss-120b',
+          stream: false,
+        });
+
+        const result = chatCompletion3.choices[0]?.message?.content;
+        suggestions = JSON.parse(result);
+
+        // console.log(JSON.parse(result));
+
+        return reply.send({
+          conversationId: createdConversation._id,
+          title,
+          role: 'assistant',
+          content: assistantReply,
+          suggestions,
+        });
+      }
+    } catch (error) {
+      console.error(`[${request.url}] error:`, error);
+      return reply.internalServerError('Something went wrong.');
+    }
+  });
+
+  fastify.get(
+    '/api/v1/conversations',
+    { preHandler: authenticateUser },
+    async (request, reply) => {
+      const { userId } = request;
+
+      const conversations = await Conversation.find({
+        user: userId,
+        status: 'active',
+      })
+        .select({ _id: 0, id: '$_id', title: 1, pinned: 1 })
+        .sort({ updatedAt: -1, pinned: 1 })
+        .lean();
+
+      return reply.send(conversations);
+    },
+  );
+
+  fastify.get(
+    '/api/v1/conversations/:id/messages',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      const { userId } = request;
+
+      const { id } = request.params;
+
+      const isActive = await Conversation.exists({
+        _id: id,
+        user: userId,
+        status: 'active',
+      }).lean();
+
+      if (!isActive) return reply.send([]);
+
+      const messages = await Message.find({ conversation: id, user: userId })
+        .sort({ createdAt: 1 })
+        .select({
+          _id: 0,
+          id: '$_id',
+          role: 1,
+          content: 1,
+          model: 1,
+          rating: 1,
+          createdAt: 1,
+        })
+        .lean();
+
+      return reply.send(messages);
+    },
+  );
+
+  fastify.delete(
+    '/api/conversations/:id',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      const { userId } = request;
+
+      const { id } = request.params;
+
+      const converstaion = await Conversation.findOne({
+        _id: id,
+        user: userId,
+        status: 'active',
+      }).exec();
+
+      if (!converstaion) return reply.notFound('Conversation not found.');
+
+      converstaion.status = 'deleted';
+
+      await converstaion.save();
+
+      return reply.send();
+    },
+  );
+
+  fastify.post(
+    '/api/conversations/delete/all',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      const { userId } = request;
+
+      await Conversation.deleteMany({ user: userId }).exec();
+      await Message.deleteMany({ user: userId }).exec();
+
+      return reply.send();
+    },
+  );
+
+  fastify.post(
+    '/api/v1/conversations/:id/rename',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      const { userId } = request;
+
+      const { title } = request.body;
+
+      const conversation = await Conversation.findOne({
+        _id: id,
+        user: userId,
+        status: 'active',
+      }).exec();
+
+      if (!conversation) return reply.notFound('Conversation not found.');
+
+      conversation.title = title;
+
+      await conversation.save();
+
+      return reply.send();
+    },
+  );
+
+  fastify.post('/api/conversations/:id/pin', async (request, reply) => {
+    const { userId } = request;
+
+    const { id } = request.params;
+
+    //! LIMIT BY 10 OR 5
+
+    const chat = await Conversation.findOne({ _id: id, user: userId }).exec();
+
+    // if (!chat) return res.send() //! ADD THIS
+
+    chat.pinned = !chat.pinned;
+
+    await chat.save();
+
+    return reply.send({ pinned: chat.pinned });
+  });
+
+  ////////////////////////////////////////////////////////////////////////! STREAMING
+  fastify.post('/api/chat/stream', async (req, res) => {
+    const { chatId, message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    // 1. Set headers required for Server-Sent Events (SSE)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    // Optional: Disable compression for proxies that buffer SSE streams
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    try {
+      // 2. Request streaming completion from Groq
+      const completionStream = await groq.chat.completions.create({
+        model: 'openai/gpt-oss-20b',
+        messages: [{ role: 'user', content: message }],
+        stream: true,
       });
 
-      req.session.userId = createdUser._id;
+      let fullResponseText = '';
 
-      // Check if user has unsaved conversation
-      if (data.guestSessionId) {
-        const conversation = await Conversation.findOne({
-          guestSessionId: data.guestSessionId,
-        }).exec();
-
-        if (conversation) {
-          conversation.user = createdUser._id;
-          conversation.guestSessionId = undefined;
-          await conversation.save();
+      // 3. Iterate over async iterable chunks from Groq
+      for await (const chunk of completionStream) {
+        const delta = chunk.choices[0]?.delta?.content || '';
+        if (delta) {
+          fullResponseText += delta;
+          // Format as standard SSE data packet
+          res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
         }
       }
 
-      return res.status(201).send();
+      // 4. Signal stream completion to the frontend
+      res.write('data: [DONE]\n\n');
+      res.end();
+
+      // 5. Save the complete accumulated response to MongoDB asynchronously
+      // await Message.create({
+      //   chatId: chatId || null,
+      //   role: 'assistant',
+      //   content: fullResponseText,
+      //   createdAt: new Date(),
+      // });
     } catch (error) {
-      console.error(`[${req.url}] error:`, error);
-      return res.status(500).json({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message: 'Something went wrong.',
-      });
-    }
-  });
-
-  app.post('/api/login', async (req, res) => {
-    try {
-      const loginSchema = z.object({
-        email: z.email(),
-        password: z.string(),
-        guestSessionId: z.string().optional(),
-      });
-
-      const { success, data } = loginSchema.safeParse(req.body);
-
-      if (!success)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Please provide a valid email address and password.',
-        });
-
-      const user = await User.findOne({ email: data.email }).lean();
-
-      if (!user)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid email or password.',
-        });
-
-      const isValidPassword = await argon2.verify(user.hash, data.password);
-
-      if (!isValidPassword)
-        return res.status(400).json({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'Invalid email or password.',
-        });
-
-      req.session.userId = user._id;
-
-      // Check if user has unsaved conversation
-      // if (data.guestSessionId) {
-      //   const conversation = await Conversation.findOne({
-      //     guestSessionId: data.guestSessionId,
-      //   }).exec();
-
-      //   if (conversation) {
-      //     conversation.user = user._id;
-      //     conversation.guestSessionId = undefined;
-      //     await conversation.save();
-      //   }
-      // }
-
-      return res.send();
-    } catch (error) {
-      console.error(`[${req.url}] error:`, error);
-      return res.status(500).json({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message: 'Something went wrong.',
-      });
-    }
-  });
-
-  app.get('/api/logout', async (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        console.error('Session destruction failed:', err);
-        return res.status(500).json({ message: 'Logout failed' });
-      }
-
-      return res.send();
-    });
-  });
-
-  function errorResponse({ code = 500, message = 'Something went wrong' }) {
-    let error = 'Internal Server Error';
-
-    if (code === 401) error = 'Unauthorized';
-
-    return {
-      statusCode: code,
-      error,
-      message,
-    };
-  }
-
-  app.get('/api/me', async (req, res) => {
-    try {
-      if (!req.session?.userId)
-        return res.status(401).json(
-          errorResponse({
-            code: 401,
-            message: 'You need to be authenticated to access this route.',
-          }),
+      console.error('Groq streaming error:', error);
+      // If headers haven't been sent yet, send a standard JSON error
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to generate stream response' });
+      } else {
+        // If stream already started, push an error event down the pipe
+        res.write(
+          `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
         );
-
-      const { userId } = req.session;
-
-      const user = await User.findById(userId)
-        .select({ email: 1, name: 1 })
-        .lean();
-
-      if (!user) return res.send('User not found!');
-
-      return res.send(user);
-    } catch (error) {
-      console.log(error);
-      return res.status(500).json({ message: 'Error!' });
+        res.end();
+      }
     }
   });
 

@@ -11,6 +11,9 @@ export function authenticateUser(request, reply, done) {
         return;
       }
 
+      // Decorate request
+      request.userId = session.user.id;
+
       done();
     });
 }
