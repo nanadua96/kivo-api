@@ -23,16 +23,11 @@ import { __DEV__ } from './src/constants/index.js';
   // =================================
   // MONGODB
   // =================================
-  mongoose
-    .connect(process.env.MONGODB_URI)
-    .then(() => {
-      fastify.log.info('Connected to MongoDB.');
-    })
-    .catch((error) => {
-      fastify.log.error('MongoDB connection error:');
-      console.error(error);
-      process.exit(1);
-    });
+  mongoose.connect(process.env.MONGODB_URI).catch((error) => {
+    fastify.log.error('MongoDB connection error:');
+    console.error(error);
+    process.exit(1);
+  });
 
   // =================================
   // PLUGINS

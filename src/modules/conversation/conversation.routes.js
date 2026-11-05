@@ -10,197 +10,203 @@ import { Conversation } from './conversation.model.js';
  * @returns {void}
  */
 export default function (fastify, _, done) {
-  fastify.post('/api/v1/conversations', async (request, reply) => {
-    try {
-      const {
-        conversationId = 'new',
-        model,
-        message,
-        messages = [],
-        temporary = false,
-      } = request.body;
+  fastify.post(
+    '/api/v1/conversations',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      try {
+        const {
+          conversationId = 'new',
+          model,
+          message,
+          messages = [],
+          temporary = false,
+        } = request.body;
 
-      const { userId } = request;
+        const { userId } = request;
 
-      //! UNAUTHED USER
-      if (!userId) {
-        const assistantResponses = messages.filter(
-          (i) => i.role === 'assistant',
-        );
-
-        const UNAUTH_LIMIT = 3;
-        // console.log(assistantResponses);
-
-        if (assistantResponses.length > UNAUTH_LIMIT)
-          return reply.badRequest('Limit reached! Sign in or sign up!');
-
-        const chatCompletion = await groq.chat.completions.create({
-          messages,
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
-
-        const assistantReply =
-          chatCompletion.choices[0]?.message?.content || '';
-
-        return reply.send({ role: 'assistant', content: assistantReply });
-      }
-
-      if (temporary) {
-        //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
-        if (!messages.length)
-          return reply.badRequest(
-            'Provide at least one message. Messages required for temporary',
+        //! UNAUTHED USER
+        if (!userId) {
+          const assistantResponses = messages.filter(
+            (i) => i.role === 'assistant',
           );
 
-        const chatCompletion = await groq.chat.completions.create({
-          messages,
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
+          const UNAUTH_LIMIT = 3;
+          // console.log(assistantResponses);
 
-        const assistantReply =
-          chatCompletion.choices[0]?.message?.content || '';
+          if (assistantResponses.length > UNAUTH_LIMIT)
+            return reply.badRequest(
+              'You’ve reached the free chat limit. Sign in or create an account to continue chatting.',
+            );
 
-        //! ADD SUGGESTIONS
+          const chatCompletion = await groq.chat.completions.create({
+            messages,
+            model: 'openai/gpt-oss-120b',
+            stream: false,
+          });
 
-        return res.json({ role: 'assistant', content: assistantReply });
-      }
+          const assistantReply =
+            chatCompletion.choices[0]?.message?.content || '';
 
-      //! USE TRANSACTIONS
-      if (!message && !temporary)
-        return reply.badRequest('Message input is required');
+          return reply.send({ role: 'assistant', content: assistantReply });
+        }
 
-      if (conversationId !== 'new') {
-        const history = await Message.find({
-          conversation: conversationId,
-          user: userId,
-        })
-          .select({ _id: 0, role: 1, content: 1 })
-          .lean();
+        if (temporary) {
+          //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
+          if (!messages.length)
+            return reply.badRequest(
+              'Provide at least one message. Messages required for temporary',
+            );
 
-        const messages = [...history, { role: 'user', content: message }];
+          const chatCompletion = await groq.chat.completions.create({
+            messages,
+            model: 'openai/gpt-oss-120b',
+            stream: false,
+          });
 
-        const chatCompletion = await groq.chat.completions.create({
-          messages,
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
+          const assistantReply =
+            chatCompletion.choices[0]?.message?.content || '';
 
-        const assistantReply =
-          chatCompletion.choices[0]?.message?.content || '';
+          //! ADD SUGGESTIONS
 
-        await Message.create([
-          {
-            role: 'user',
-            content: message,
+          return res.json({ role: 'assistant', content: assistantReply });
+        }
+
+        //! USE TRANSACTIONS
+        if (!message) return reply.badRequest('Message input is required');
+
+        if (conversationId !== 'new') {
+          const history = await Message.find({
             conversation: conversationId,
             user: userId,
-            model,
-          },
-          {
-            role: 'assistant',
-            content: assistantReply,
-            conversation: conversationId,
-            user: userId,
-            model,
-          },
-        ]);
+          })
+            .select({ _id: 0, role: 1, content: 1 })
+            .lean();
 
-        //! ADD SUGGESTIONS
+          const messages = [...history, { role: 'user', content: message }];
 
-        return reply.send({
-          role: 'assistant',
-          content: assistantReply,
-        });
-      }
+          const chatCompletion = await groq.chat.completions.create({
+            messages,
+            model: 'openai/gpt-oss-120b',
+            stream: false,
+          });
 
-      if (conversationId === 'new') {
-        const chatCompletion = await groq.chat.completions.create({
-          messages: [{ role: 'user', content: message }],
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
+          const assistantReply =
+            chatCompletion.choices[0]?.message?.content || '';
 
-        const assistantReply =
-          chatCompletion.choices[0]?.message?.content || '';
-
-        const chatCompletion2 = await groq.chat.completions.create({
-          messages: [
-            { role: 'user', content: message },
-            { role: 'assistant', content: assistantReply },
+          await Message.create([
             {
               role: 'user',
-              content:
-                // "Give me a title for this chat. Keep it casual. Don't let it be more than 80 characters. Return Plain text not markdown formatted. If you have multple choices, pick the shorter version.",
-                'Give this chat a casual title under 80 characters. Return plain text only, choosing the shortest option if there are multiple.',
+              content: message,
+              conversation: conversationId,
+              user: userId,
             },
-          ],
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
-
-        const title = chatCompletion2.choices[0]?.message?.content || '';
-
-        // Store in db
-        const createdConversation = await Conversation.create({
-          model,
-          title,
-          user: userId,
-        });
-
-        await Message.create([
-          {
-            content: message,
-            conversation: createdConversation._id,
-            role: 'user',
-            user: userId,
-            model,
-          },
-          {
-            content: assistantReply,
-            conversation: createdConversation._id,
-            role: 'assistant',
-            user: userId,
-            model,
-          },
-        ]);
-
-        let suggestions = [];
-
-        const chatCompletion3 = await groq.chat.completions.create({
-          messages: [
-            { role: 'user', content: message },
-            { role: 'assistant', content: assistantReply },
             {
-              role: 'user',
-              content:
-                // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
-                "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
+              role: 'assistant',
+              content: assistantReply,
+              conversation: conversationId,
+              user: userId,
+              model,
             },
-          ],
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
+          ]);
 
-        const result = chatCompletion3.choices[0]?.message?.content;
-        suggestions = JSON.parse(result);
+          //! ADD SUGGESTIONS
 
-        // console.log(JSON.parse(result));
+          return reply.send({
+            role: 'assistant',
+            content: assistantReply,
+          });
+        }
 
-        return reply.send({
-          conversationId: createdConversation._id,
-          title,
-          role: 'assistant',
-          content: assistantReply,
-          suggestions,
-        });
+        if (conversationId === 'new') {
+          const chatCompletion = await groq.chat.completions.create({
+            messages: [{ role: 'user', content: message }],
+            model: 'openai/gpt-oss-120b',
+            stream: false,
+          });
+
+          const assistantReply =
+            chatCompletion.choices[0]?.message?.content || '';
+
+          const chatCompletion2 = await groq.chat.completions.create({
+            messages: [
+              { role: 'user', content: message },
+              // { role: 'assistant', content: assistantReply },
+              {
+                role: 'user',
+                content:
+                  'Give this chat a casual title under 80 characters. Return plain text only, no line breaks, no special characters. Choose the shortest option if there are multiple.',
+              },
+            ],
+            model: 'openai/gpt-oss-120b',
+            stream: false,
+          });
+
+          const title = chatCompletion2.choices[0]?.message?.content || '';
+
+          // Store in db
+          const createdConversation = await Conversation.create({
+            model,
+            title,
+            user: userId,
+          });
+
+          await Message.create([
+            {
+              content: message,
+              conversation: createdConversation._id,
+              role: 'user',
+              user: userId,
+              model,
+            },
+            {
+              content: assistantReply,
+              conversation: createdConversation._id,
+              role: 'assistant',
+              user: userId,
+              model,
+            },
+          ]);
+
+          let suggestions = [];
+
+          // const chatCompletion3 = await groq.chat.completions.create({
+          //   messages: [
+          //     { role: 'user', content: message },
+          //     // { role: 'assistant', content: assistantReply },
+          //     {
+          //       role: 'user',
+          //       content:
+          //         // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+          //         "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
+          //     },
+          //   ],
+          //   model: 'openai/gpt-oss-120b',
+          //   stream: false,
+          // });
+
+          // const result = chatCompletion3.choices[0]?.message?.content;
+          // suggestions = JSON.parse(result);
+
+          // console.log(JSON.parse(result));
+
+          return reply.send({
+            conversationId: createdConversation._id,
+            title,
+            role: 'assistant',
+            content: assistantReply,
+            suggestions,
+          });
+        }
+      } catch (error) {
+        console.error(`[${request.url}] error:`, error);
+        return reply.internalServerError('Something went wrong.');
       }
-    } catch (error) {
-      console.error(`[${request.url}] error:`, error);
-      return reply.internalServerError('Something went wrong.');
-    }
-  });
+    },
+  );
 
   fastify.get(
     '/api/v1/conversations',
@@ -257,7 +263,7 @@ export default function (fastify, _, done) {
   );
 
   fastify.delete(
-    '/api/conversations/:id',
+    '/api/v1/conversations/:id',
     {
       preHandler: authenticateUser,
       schema: {},
@@ -284,7 +290,7 @@ export default function (fastify, _, done) {
   );
 
   fastify.post(
-    '/api/conversations/delete/all',
+    '/api/v1/conversations/delete/all',
     {
       preHandler: authenticateUser,
       schema: {},
@@ -328,23 +334,33 @@ export default function (fastify, _, done) {
     },
   );
 
-  fastify.post('/api/conversations/:id/pin', async (request, reply) => {
-    const { userId } = request;
+  fastify.post(
+    '/api/v1/conversations/:id/pin',
+    {
+      preHandler: authenticateUser,
+      schema: {},
+    },
+    async (request, reply) => {
+      const { userId } = request;
 
-    const { id } = request.params;
+      const { id } = request.params;
 
-    //! LIMIT BY 10 OR 5
+      //! LIMIT BY 10 OR 5
 
-    const chat = await Conversation.findOne({ _id: id, user: userId }).exec();
+      const conversation = await Conversation.findOne({
+        _id: id,
+        user: userId,
+      }).exec();
 
-    // if (!chat) return res.send() //! ADD THIS
+      if (!conversation) return reply.notFound('Conversation not found.');
 
-    chat.pinned = !chat.pinned;
+      conversation.pinned = !conversation.pinned;
 
-    await chat.save();
+      await conversation.save();
 
-    return reply.send({ pinned: chat.pinned });
-  });
+      return reply.send({ pinned: conversation.pinned });
+    },
+  );
 
   ////////////////////////////////////////////////////////////////////////! STREAMING
   fastify.post('/api/chat/stream', async (req, res) => {
