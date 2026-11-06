@@ -13,7 +13,7 @@ export default function (fastify, _, done) {
   fastify.post(
     '/api/v1/conversations',
     {
-      preHandler: authenticateUser,
+      // preHandler: authenticateUser,
       schema: {},
     },
     async (request, reply) => {
@@ -28,8 +28,17 @@ export default function (fastify, _, done) {
 
         const { userId } = request;
 
-        //! UNAUTHED USER
-        if (!userId) {
+        const isAuthenticated = Boolean(userId.trim());
+        // const isTemporary = Boolean(userId.trim()) && Boolean(temporary);
+
+        // console.log({ isAuthenticated, isTemporary });
+
+        // return 'Hello world!';
+
+        //! UNAUTHED USER AND TEMPORARY
+        if (!isAuthenticated) {
+          // Add limits to unathed users
+
           const assistantResponses = messages.filter(
             (i) => i.role === 'assistant',
           );
@@ -37,7 +46,7 @@ export default function (fastify, _, done) {
           const UNAUTH_LIMIT = 3;
           // console.log(assistantResponses);
 
-          if (assistantResponses.length > UNAUTH_LIMIT)
+          if (!assistantResponses.length > UNAUTH_LIMIT)
             return reply.badRequest(
               'You’ve reached the free chat limit. Sign in or create an account to continue chatting.',
             );
@@ -72,7 +81,7 @@ export default function (fastify, _, done) {
 
           //! ADD SUGGESTIONS
 
-          return res.json({ role: 'assistant', content: assistantReply });
+          return reply.send({ role: 'assistant', content: assistantReply });
         }
 
         //! USE TRANSACTIONS
@@ -363,45 +372,57 @@ export default function (fastify, _, done) {
   );
 
   ////////////////////////////////////////////////////////////////////////! STREAMING
-  fastify.post('/api/chat/stream', async (req, res) => {
-    const { chatId, message } = req.body;
+  fastify.post('/api/v1/conversations/stream', async (request, reply) => {
+    const {
+      conversationId,
+      message,
+      model = 'openai/gpt-oss-20b',
+    } = request.body;
 
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+    if (!message) return reply.badRequest('Message is required.');
+
+    // Explicit CORS headers for the hijacked response
+    const allowedOrigins = ['http://127.0.0.1:3000'];
+
+    const origin = request.headers.origin;
+
+    if (allowedOrigins.includes(origin)) {
+      reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      reply.raw.setHeader('Vary', 'Origin');
     }
 
-    // 1. Set headers required for Server-Sent Events (SSE)
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    // Optional: Disable compression for proxies that buffer SSE streams
-    res.setHeader('X-Accel-Buffering', 'no');
+    // Configure SSE headers
+    reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('X-Accel-Buffering', 'no');
+
+    // Take control of the response lifecycle
+    reply.hijack();
 
     try {
-      // 2. Request streaming completion from Groq
       const completionStream = await groq.chat.completions.create({
-        model: 'openai/gpt-oss-20b',
+        model,
         messages: [{ role: 'user', content: message }],
         stream: true,
       });
 
       let fullResponseText = '';
 
-      // 3. Iterate over async iterable chunks from Groq
       for await (const chunk of completionStream) {
         const delta = chunk.choices[0]?.delta?.content || '';
+
         if (delta) {
           fullResponseText += delta;
-          // Format as standard SSE data packet
-          res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+          reply.raw.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
         }
       }
 
-      // 4. Signal stream completion to the frontend
-      res.write('data: [DONE]\n\n');
-      res.end();
+      // Signal that generation is complete
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
 
-      // 5. Save the complete accumulated response to MongoDB asynchronously
       // await Message.create({
       //   chatId: chatId || null,
       //   role: 'assistant',
@@ -409,17 +430,297 @@ export default function (fastify, _, done) {
       //   createdAt: new Date(),
       // });
     } catch (error) {
-      console.error('Groq streaming error:', error);
-      // If headers haven't been sent yet, send a standard JSON error
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Failed to generate stream response' });
-      } else {
-        // If stream already started, push an error event down the pipe
-        res.write(
+      fastify.log.error('Groq streaming error:');
+      console.error(error);
+
+      if (!reply.raw.writableEnded) {
+        reply.raw.write(
           `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
         );
-        res.end();
       }
+
+      reply.raw.end();
+    }
+  });
+
+  fastify.post('/test', async (request, reply) => {
+    ////////////////////////////////////////////////////////////////////////////////////////////! TEMP
+    // fastify.post(
+    //   '/api/v1/conversations',
+    //   {
+    //     // preHandler: authenticateUser,
+    //     schema: {},
+    //   },
+    //   async (request, reply) => {
+    //     try {
+    //       const {
+    //         conversationId = 'new',
+    //         model,
+    //         message,
+    //         messages = [],
+    //         temporary = false,
+    //       } = request.body;
+
+    //       const { userId } = request;
+
+    //       const isAuthenticated = Boolean(userId.trim());
+    //       // const isTemporary = Boolean(userId.trim()) && Boolean(temporary);
+
+    //       // console.log({ isAuthenticated, isTemporary });
+
+    //       // return 'Hello world!';
+
+    //       //! UNAUTHED USER AND TEMPORARY
+    //       if (!isAuthenticated) {
+    //         // Add limits to unathed users
+
+    //         const assistantResponses = messages.filter(
+    //           (i) => i.role === 'assistant',
+    //         );
+
+    //         const UNAUTH_LIMIT = 3;
+    //         // console.log(assistantResponses);
+
+    //         if (!assistantResponses.length > UNAUTH_LIMIT)
+    //           return reply.badRequest(
+    //             'You’ve reached the free chat limit. Sign in or create an account to continue chatting.',
+    //           );
+
+    //         const chatCompletion = await groq.chat.completions.create({
+    //           messages,
+    //           model: 'openai/gpt-oss-120b',
+    //           stream: false,
+    //         });
+
+    //         const assistantReply =
+    //           chatCompletion.choices[0]?.message?.content || '';
+
+    //         return reply.send({ role: 'assistant', content: assistantReply });
+    //       }
+
+    //       if (temporary) {
+    //         //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
+    //         if (!messages.length)
+    //           return reply.badRequest(
+    //             'Provide at least one message. Messages required for temporary',
+    //           );
+
+    //         const chatCompletion = await groq.chat.completions.create({
+    //           messages,
+    //           model: 'openai/gpt-oss-120b',
+    //           stream: false,
+    //         });
+
+    //         const assistantReply =
+    //           chatCompletion.choices[0]?.message?.content || '';
+
+    //         //! ADD SUGGESTIONS
+
+    //         return reply.send({ role: 'assistant', content: assistantReply });
+    //       }
+
+    //       //! USE TRANSACTIONS
+    //       if (!message) return reply.badRequest('Message input is required');
+
+    //       if (conversationId !== 'new') {
+    //         const history = await Message.find({
+    //           conversation: conversationId,
+    //           user: userId,
+    //         })
+    //           .select({ _id: 0, role: 1, content: 1 })
+    //           .lean();
+
+    //         const messages = [...history, { role: 'user', content: message }];
+
+    //         const chatCompletion = await groq.chat.completions.create({
+    //           messages,
+    //           model: 'openai/gpt-oss-120b',
+    //           stream: false,
+    //         });
+
+    //         const assistantReply =
+    //           chatCompletion.choices[0]?.message?.content || '';
+
+    //         await Message.create([
+    //           {
+    //             role: 'user',
+    //             content: message,
+    //             conversation: conversationId,
+    //             user: userId,
+    //           },
+    //           {
+    //             role: 'assistant',
+    //             content: assistantReply,
+    //             conversation: conversationId,
+    //             user: userId,
+    //             model,
+    //           },
+    //         ]);
+
+    //         //! ADD SUGGESTIONS
+
+    //         return reply.send({
+    //           role: 'assistant',
+    //           content: assistantReply,
+    //         });
+    //       }
+
+    //       if (conversationId === 'new') {
+    //         const chatCompletion = await groq.chat.completions.create({
+    //           messages: [{ role: 'user', content: message }],
+    //           model: 'openai/gpt-oss-120b',
+    //           stream: false,
+    //         });
+
+    //         const assistantReply =
+    //           chatCompletion.choices[0]?.message?.content || '';
+
+    //         const chatCompletion2 = await groq.chat.completions.create({
+    //           messages: [
+    //             { role: 'user', content: message },
+    //             // { role: 'assistant', content: assistantReply },
+    //             {
+    //               role: 'user',
+    //               content:
+    //                 'Give this chat a casual title under 80 characters. Return plain text only, no line breaks, no special characters. Choose the shortest option if there are multiple.',
+    //             },
+    //           ],
+    //           model: 'openai/gpt-oss-120b',
+    //           stream: false,
+    //         });
+
+    //         const title = chatCompletion2.choices[0]?.message?.content || '';
+
+    //         // Store in db
+    //         const createdConversation = await Conversation.create({
+    //           model,
+    //           title,
+    //           user: userId,
+    //         });
+
+    //         await Message.create([
+    //           {
+    //             content: message,
+    //             conversation: createdConversation._id,
+    //             role: 'user',
+    //             user: userId,
+    //             model,
+    //           },
+    //           {
+    //             content: assistantReply,
+    //             conversation: createdConversation._id,
+    //             role: 'assistant',
+    //             user: userId,
+    //             model,
+    //           },
+    //         ]);
+
+    //         let suggestions = [];
+
+    //         // const chatCompletion3 = await groq.chat.completions.create({
+    //         //   messages: [
+    //         //     { role: 'user', content: message },
+    //         //     // { role: 'assistant', content: assistantReply },
+    //         //     {
+    //         //       role: 'user',
+    //         //       content:
+    //         //         // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
+    //         //         "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
+    //         //     },
+    //         //   ],
+    //         //   model: 'openai/gpt-oss-120b',
+    //         //   stream: false,
+    //         // });
+
+    //         // const result = chatCompletion3.choices[0]?.message?.content;
+    //         // suggestions = JSON.parse(result);
+
+    //         // console.log(JSON.parse(result));
+
+    //         return reply.send({
+    //           conversationId: createdConversation._id,
+    //           title,
+    //           role: 'assistant',
+    //           content: assistantReply,
+    //           suggestions,
+    //         });
+    //       }
+    //     } catch (error) {
+    //       console.error(`[${request.url}] error:`, error);
+    //       return reply.internalServerError('Something went wrong.');
+    //     }
+    //   },
+    // );
+
+    ////////////////////////////////////////////////////////////////////////////////////////////! TEMP
+
+    const {
+      conversationId,
+      message,
+      model = 'openai/gpt-oss-20b',
+    } = request.body;
+
+    if (!message) return reply.badRequest('Message is required.');
+
+    // Explicit CORS headers for the hijacked response
+    const allowedOrigins = ['http://127.0.0.1:3000'];
+
+    const origin = request.headers.origin;
+
+    if (allowedOrigins.includes(origin)) {
+      reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      reply.raw.setHeader('Vary', 'Origin');
+    }
+
+    // Configure SSE headers
+    reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('X-Accel-Buffering', 'no');
+
+    // Take control of the response lifecycle
+    reply.hijack();
+
+    try {
+      const completionStream = await groq.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: message }],
+        stream: true,
+      });
+
+      let fullResponseText = '';
+
+      for await (const chunk of completionStream) {
+        const delta = chunk.choices[0]?.delta?.content || '';
+
+        if (delta) {
+          fullResponseText += delta;
+          reply.raw.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+        }
+      }
+
+      // Signal that generation is complete
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+
+      // await Message.create({
+      //   chatId: chatId || null,
+      //   role: 'assistant',
+      //   content: fullResponseText,
+      //   createdAt: new Date(),
+      // });
+    } catch (error) {
+      fastify.log.error('Groq streaming error:');
+      console.error(error);
+
+      if (!reply.raw.writableEnded) {
+        reply.raw.write(
+          `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
+        );
+      }
+
+      reply.raw.end();
     }
   });
 
