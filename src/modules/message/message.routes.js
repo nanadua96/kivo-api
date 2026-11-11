@@ -129,79 +129,7 @@ export default async function (fastify, _, done) {
     }
   });
 
-  app.post('/api/messages/:id/regenerate', async (req, res) => {
-    try {
-      const { id } = req.params;
 
-      const { model, messages = [] } = req.body;
-
-      const userId = req.session.userId;
-
-      //! USE TRANSACTIONS
-
-      if (userId) {
-        const currentMessage = await Message.findOne({
-          _id: id,
-          user: userId,
-          role: 'user',
-        }).lean();
-
-        if (!currentMessage) return res.send('MESSAGE NOT FOUND!');
-
-        const conversationId = currentMessage.conversation;
-
-        const history = await Message.find({
-          conversation: conversationId,
-          user: userId,
-          _id: { $lte: id },
-        }).lean();
-
-        const mapped = history.map((i) => ({
-          role: i.role,
-          content: i.content,
-        }));
-
-        // return res.json({ currentMessage, history, mapped }); // Debugging
-
-        const chatCompletion = await groq.chat.completions.create({
-          messages: mapped,
-          model: 'openai/gpt-oss-120b',
-          stream: false,
-        });
-
-        const reply = chatCompletion.choices[0]?.message?.content || '';
-
-        await Message.deleteMany({
-          conversation: conversationId,
-          user: userId,
-          _id: { $gt: id },
-        });
-
-        await Message.create({
-          role: 'assistant',
-          content: reply,
-          conversation: conversationId,
-          user: userId,
-          model,
-        });
-
-        return res.json({
-          role: 'assistant',
-          content: reply,
-          // timestamp: new Date(),
-        });
-      }
-
-      return res.send('Hello world!');
-    } catch (error) {
-      console.error(`[${req.url}] error:`, error);
-      return res.status(500).json({
-        statusCode: 500,
-        error: 'Internal Server Error',
-        message: 'Something went wrong.',
-      });
-    }
-  });
 
   done();
 }

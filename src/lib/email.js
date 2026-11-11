@@ -6,8 +6,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 export async function sendOTPEmail({ to, otp, type }) {
   const subjects = {
     'sign-in': 'Your sign-in code',
-    'email-verification': 'Verify your email',
-    // 'forget-password': 'Reset your password',
+
   };
 
   await resend.emails.send({

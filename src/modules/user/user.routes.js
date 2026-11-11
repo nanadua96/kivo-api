@@ -2,7 +2,7 @@ import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 // import argon2 from 'argon2';
 import { fromNodeHeaders } from 'better-auth/node';
 import sharp from 'sharp';
-import { s3 } from '../../config/s3.config.js';
+import { s3 } from '../../lib/s3.js';
 // import { User } from './user.model.js';
 import { auth } from '../../lib/auth.js';
 import {

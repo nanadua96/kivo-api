@@ -1,13 +1,9 @@
 import 'dotenv/config';
-// import { fromNodeHeaders } from 'better-auth/node';
-// import MongoStore from 'connect-mongo';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
-import { __DEV__ } from './src/constants/index.js';
 
-// import { auth } from './src/lib/auth.js';
-// import { authenticateUser } from './src/modules/auth/auth.hook.js';
-
+  const __DEV__ = process.env.NODE_ENV !== 'production';
+  
 (async () => {
   // =================================
   // FASTIFY INSTANCE
@@ -58,22 +54,6 @@ import { __DEV__ } from './src/constants/index.js';
 
   await fastify.register(import('@fastify/multipart'));
 
-  // await fastify.register(import('@fastify/cookie'));
-
-  // fastify.register(import('@fastify/session'), {
-  //   secret: process.env.SESSION_SECRET,
-  //   saveUninitialized: false,
-  //   rolling: true,
-  //   cookie: {
-  //     maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
-  //     // domain: process.env.NODE_ENV === 'production' ? 'onrender.com' : undefined,
-  //     secure: process.env.NODE_ENV === 'production',
-  //   },
-  //   store: MongoStore.create({
-  //     mongoUrl: process.env.MONGODB_URI,
-  //   }),
-  // });
-
   await fastify.register(import('@fastify/sensible'));
 
   // =================================
@@ -106,7 +86,10 @@ import { __DEV__ } from './src/constants/index.js';
   );
 
   fastify.setErrorHandler(function (error, _, reply) {
-    const GENERIC_MESSAGE = __DEV__
+
+  
+
+    const GENERIC_MESSAGE =  __DEV__
       ? 'Something went wrong. Check console for details.'
       : 'Something went wrong. Please try again later.';
 

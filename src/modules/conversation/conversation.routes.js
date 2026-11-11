@@ -13,7 +13,7 @@ import { Conversation } from './conversation.model.js';
  */
 export default function (fastify, _, done) {
   fastify.post(
-    '/api/v1/conversations',
+    'deprecated',
     {
       // preHandler: authenticateUser,
       schema: {},
@@ -396,78 +396,7 @@ export default function (fastify, _, done) {
   );
 
   ////////////////////////////////////////////////////////////////////////! STREAMING
-  fastify.post('/api/v1/conversations/stream', async (request, reply) => {
-    const {
-      conversationId,
-      message,
-      model = 'openai/gpt-oss-20b',
-    } = request.body;
-
-    if (!message) return reply.badRequest('Message is required.');
-
-    // Explicit CORS headers for the hijacked response
-    const allowedOrigins = ['http://127.0.0.1:3000'];
-
-    const origin = request.headers.origin;
-
-    if (allowedOrigins.includes(origin)) {
-      reply.raw.setHeader('Access-Control-Allow-Origin', origin);
-      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
-      reply.raw.setHeader('Vary', 'Origin');
-    }
-
-    // Configure SSE headers
-    reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-    reply.raw.setHeader('Connection', 'keep-alive');
-    reply.raw.setHeader('X-Accel-Buffering', 'no');
-
-    // Take control of the response lifecycle
-    reply.hijack();
-
-    try {
-      const completionStream = await groq.chat.completions.create({
-        model,
-        messages: [{ role: 'user', content: message }],
-        stream: true,
-      });
-
-      let fullResponseText = '';
-
-      for await (const chunk of completionStream) {
-        const delta = chunk.choices[0]?.delta?.content || '';
-
-        if (delta) {
-          fullResponseText += delta;
-          reply.raw.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
-        }
-      }
-
-      // Signal that generation is complete
-      reply.raw.write('data: [DONE]\n\n');
-      reply.raw.end();
-
-      // await Message.create({
-      //   chatId: chatId || null,
-      //   role: 'assistant',
-      //   content: fullResponseText,
-      //   createdAt: new Date(),
-      // });
-    } catch (error) {
-      fastify.log.error('Groq streaming error:');
-      console.error(error);
-
-      if (!reply.raw.writableEnded) {
-        reply.raw.write(
-          `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
-        );
-      }
-
-      reply.raw.end();
-    }
-  });
-
-  fastify.post('/test', async (request, reply) => {
+  fastify.post('/api/v1/conversations', async (request, reply) => {
     const {
       conversationId,
       messages,
@@ -480,7 +409,6 @@ export default function (fastify, _, done) {
 
     const userId = user?.id || null;
 
-    // if (!message) return reply.badRequest('Message is required.');
 
     // Explicit CORS headers for the hijacked response
     const allowedOrigins = ['http://127.0.0.1:3000'];
