@@ -1,4 +1,6 @@
-import { groq } from '../../lib/index.js';
+import { fromNodeHeaders } from 'better-auth/node';
+import mongoose from 'mongoose';
+import { auth, groq } from '../../lib/index.js';
 import { authenticateUser } from '../auth/auth.hook.js';
 import { Message } from '../message/message.model.js';
 import { Conversation } from './conversation.model.js';
@@ -223,13 +225,35 @@ export default function (fastify, _, done) {
     async (request, reply) => {
       const { userId } = request;
 
-      const conversations = await Conversation.find({
-        user: userId,
-        status: 'active',
-      })
-        .select({ _id: 0, id: '$_id', title: 1, pinned: 1 })
-        .sort({ updatedAt: -1, pinned: 1 })
-        .lean();
+      const { page, limit } = request.query;
+
+      const pipeline = [
+        {
+          $match: {
+            user: new mongoose.Types.ObjectId(userId),
+            status: 'active',
+          },
+        },
+        {
+          $sort: {
+            date: -1,
+            pinned: -1,
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            id: '$_id',
+            title: 1,
+            pinned: 1,
+          },
+        },
+      ];
+
+      const conversations = await Conversation.aggregatePaginate(pipeline, {
+        page,
+        limit,
+      });
 
       return reply.send(conversations);
     },
@@ -444,223 +468,19 @@ export default function (fastify, _, done) {
   });
 
   fastify.post('/test', async (request, reply) => {
-    ////////////////////////////////////////////////////////////////////////////////////////////! TEMP
-    // fastify.post(
-    //   '/api/v1/conversations',
-    //   {
-    //     // preHandler: authenticateUser,
-    //     schema: {},
-    //   },
-    //   async (request, reply) => {
-    //     try {
-    //       const {
-    //         conversationId = 'new',
-    //         model,
-    //         message,
-    //         messages = [],
-    //         temporary = false,
-    //       } = request.body;
-
-    //       const { userId } = request;
-
-    //       const isAuthenticated = Boolean(userId.trim());
-    //       // const isTemporary = Boolean(userId.trim()) && Boolean(temporary);
-
-    //       // console.log({ isAuthenticated, isTemporary });
-
-    //       // return 'Hello world!';
-
-    //       //! UNAUTHED USER AND TEMPORARY
-    //       if (!isAuthenticated) {
-    //         // Add limits to unathed users
-
-    //         const assistantResponses = messages.filter(
-    //           (i) => i.role === 'assistant',
-    //         );
-
-    //         const UNAUTH_LIMIT = 3;
-    //         // console.log(assistantResponses);
-
-    //         if (!assistantResponses.length > UNAUTH_LIMIT)
-    //           return reply.badRequest(
-    //             'You’ve reached the free chat limit. Sign in or create an account to continue chatting.',
-    //           );
-
-    //         const chatCompletion = await groq.chat.completions.create({
-    //           messages,
-    //           model: 'openai/gpt-oss-120b',
-    //           stream: false,
-    //         });
-
-    //         const assistantReply =
-    //           chatCompletion.choices[0]?.message?.content || '';
-
-    //         return reply.send({ role: 'assistant', content: assistantReply });
-    //       }
-
-    //       if (temporary) {
-    //         //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
-    //         if (!messages.length)
-    //           return reply.badRequest(
-    //             'Provide at least one message. Messages required for temporary',
-    //           );
-
-    //         const chatCompletion = await groq.chat.completions.create({
-    //           messages,
-    //           model: 'openai/gpt-oss-120b',
-    //           stream: false,
-    //         });
-
-    //         const assistantReply =
-    //           chatCompletion.choices[0]?.message?.content || '';
-
-    //         //! ADD SUGGESTIONS
-
-    //         return reply.send({ role: 'assistant', content: assistantReply });
-    //       }
-
-    //       //! USE TRANSACTIONS
-    //       if (!message) return reply.badRequest('Message input is required');
-
-    //       if (conversationId !== 'new') {
-    //         const history = await Message.find({
-    //           conversation: conversationId,
-    //           user: userId,
-    //         })
-    //           .select({ _id: 0, role: 1, content: 1 })
-    //           .lean();
-
-    //         const messages = [...history, { role: 'user', content: message }];
-
-    //         const chatCompletion = await groq.chat.completions.create({
-    //           messages,
-    //           model: 'openai/gpt-oss-120b',
-    //           stream: false,
-    //         });
-
-    //         const assistantReply =
-    //           chatCompletion.choices[0]?.message?.content || '';
-
-    //         await Message.create([
-    //           {
-    //             role: 'user',
-    //             content: message,
-    //             conversation: conversationId,
-    //             user: userId,
-    //           },
-    //           {
-    //             role: 'assistant',
-    //             content: assistantReply,
-    //             conversation: conversationId,
-    //             user: userId,
-    //             model,
-    //           },
-    //         ]);
-
-    //         //! ADD SUGGESTIONS
-
-    //         return reply.send({
-    //           role: 'assistant',
-    //           content: assistantReply,
-    //         });
-    //       }
-
-    //       if (conversationId === 'new') {
-    //         const chatCompletion = await groq.chat.completions.create({
-    //           messages: [{ role: 'user', content: message }],
-    //           model: 'openai/gpt-oss-120b',
-    //           stream: false,
-    //         });
-
-    //         const assistantReply =
-    //           chatCompletion.choices[0]?.message?.content || '';
-
-    //         const chatCompletion2 = await groq.chat.completions.create({
-    //           messages: [
-    //             { role: 'user', content: message },
-    //             // { role: 'assistant', content: assistantReply },
-    //             {
-    //               role: 'user',
-    //               content:
-    //                 'Give this chat a casual title under 80 characters. Return plain text only, no line breaks, no special characters. Choose the shortest option if there are multiple.',
-    //             },
-    //           ],
-    //           model: 'openai/gpt-oss-120b',
-    //           stream: false,
-    //         });
-
-    //         const title = chatCompletion2.choices[0]?.message?.content || '';
-
-    //         // Store in db
-    //         const createdConversation = await Conversation.create({
-    //           model,
-    //           title,
-    //           user: userId,
-    //         });
-
-    //         await Message.create([
-    //           {
-    //             content: message,
-    //             conversation: createdConversation._id,
-    //             role: 'user',
-    //             user: userId,
-    //             model,
-    //           },
-    //           {
-    //             content: assistantReply,
-    //             conversation: createdConversation._id,
-    //             role: 'assistant',
-    //             user: userId,
-    //             model,
-    //           },
-    //         ]);
-
-    //         let suggestions = [];
-
-    //         // const chatCompletion3 = await groq.chat.completions.create({
-    //         //   messages: [
-    //         //     { role: 'user', content: message },
-    //         //     // { role: 'assistant', content: assistantReply },
-    //         //     {
-    //         //       role: 'user',
-    //         //       content:
-    //         //         // 'Give me 3 suggestions for this chat. Return result in an json array. If no result, return an empty json array. Dont put in code block. just the raw json',
-    //         //         "Give me 3 suggestions for this chat as a raw JSON array. If there are none, return an empty array. Don't use a code block.",
-    //         //     },
-    //         //   ],
-    //         //   model: 'openai/gpt-oss-120b',
-    //         //   stream: false,
-    //         // });
-
-    //         // const result = chatCompletion3.choices[0]?.message?.content;
-    //         // suggestions = JSON.parse(result);
-
-    //         // console.log(JSON.parse(result));
-
-    //         return reply.send({
-    //           conversationId: createdConversation._id,
-    //           title,
-    //           role: 'assistant',
-    //           content: assistantReply,
-    //           suggestions,
-    //         });
-    //       }
-    //     } catch (error) {
-    //       console.error(`[${request.url}] error:`, error);
-    //       return reply.internalServerError('Something went wrong.');
-    //     }
-    //   },
-    // );
-
-    ////////////////////////////////////////////////////////////////////////////////////////////! TEMP
-
     const {
       conversationId,
-      message,
+      messages,
       model = 'openai/gpt-oss-20b',
     } = request.body;
 
-    if (!message) return reply.badRequest('Message is required.');
+    const { user } = await auth.api.getSession({
+      headers: fromNodeHeaders(request.headers),
+    });
+
+    const userId = user?.id || null;
+
+    // if (!message) return reply.badRequest('Message is required.');
 
     // Explicit CORS headers for the hijacked response
     const allowedOrigins = ['http://127.0.0.1:3000'];
@@ -685,7 +505,7 @@ export default function (fastify, _, done) {
     try {
       const completionStream = await groq.chat.completions.create({
         model,
-        messages: [{ role: 'user', content: message }],
+        messages,
         stream: true,
       });
 
@@ -704,12 +524,48 @@ export default function (fastify, _, done) {
       reply.raw.write('data: [DONE]\n\n');
       reply.raw.end();
 
-      // await Message.create({
-      //   chatId: chatId || null,
-      //   role: 'assistant',
-      //   content: fullResponseText,
-      //   createdAt: new Date(),
-      // });
+      if (conversationId === 'new') {
+        const conversation = await Conversation.create({
+          user: userId,
+          title: messages[0].content.slice(0, 20), // fallback
+        });
+
+        await Message.create([
+          {
+            ...messages[0],
+            role: 'user',
+            user: userId,
+            conversation: conversation._id,
+          },
+          {
+            conversation: conversation._id,
+            role: 'assistant',
+            content: fullResponseText,
+            model,
+            user: userId,
+          },
+        ]);
+      }
+
+      if (conversationId !== 'new') {
+        const lastMessage = messages[messages.length - 1];
+
+        await Message.create([
+          {
+            ...lastMessage[0],
+            role: 'user',
+            user: userId,
+            conversation: conversationId,
+          },
+          {
+            conversation: conversationId,
+            role: 'assistant',
+            content: fullResponseText,
+            model,
+            user: userId,
+          },
+        ]);
+      }
     } catch (error) {
       fastify.log.error('Groq streaming error:');
       console.error(error);
@@ -723,6 +579,61 @@ export default function (fastify, _, done) {
       reply.raw.end();
     }
   });
+
+  fastify.post(
+    '/api/conversations/:id/generate-title',
+    {
+      preHandler: authenticateUser,
+    },
+    async (request, reply) => {
+      const { messages } = request.body;
+      const { id } = request.params;
+
+      const { userId } = request;
+
+      const chatCompletion = await groq.chat.completions.create({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: `Generate a concise conversation title based on the messages provided.
+REQUIREMENTS:
+- MUST be under 50 characters total.
+- MUST use title case.
+- NO quotes, colons, or special characters.
+- Focus on the primary subject or task.
+Respond with ONLY the title, no explanation.`,
+          },
+          ...messages,
+        ],
+        stream: false,
+      });
+
+      const title = chatCompletion.choices[0]?.message?.content || '';
+
+      return title;
+
+      // if (conversationId !== 'new') {
+      //   const lastMessage = messages[messages.length - 1];
+
+      //   await Message.create([
+      //     {
+      //       ...lastMessage[0],
+      //       role: 'user',
+      //       user: userId,
+      //       conversation: conversationId,
+      //     },
+      //     {
+      //       conversation: conversationId,
+      //       role: 'assistant',
+      //       content: fullResponseText,
+      //       model,
+      //       user: userId,
+      //     },
+      //   ]);
+      // }
+    },
+  );
 
   done();
 }
