@@ -1,6 +1,5 @@
-import { fromNodeHeaders } from 'better-auth/node';
 import mongoose from 'mongoose';
-import { auth, groq } from '../../lib/index.js';
+import { groq } from '../../lib/index.js';
 import { authenticateUser } from '../auth/auth.hook.js';
 import { Message } from '../message/message.model.js';
 import { Conversation } from './conversation.model.js';
@@ -13,9 +12,9 @@ import { Conversation } from './conversation.model.js';
  */
 export default function (fastify, _, done) {
   fastify.post(
-    'deprecated',
+    '/deprecated',
     {
-      // preHandler: authenticateUser,
+      preHandler: authenticateUser,
       schema: {},
     },
     async (request, reply) => {
@@ -24,69 +23,13 @@ export default function (fastify, _, done) {
           conversationId = 'new',
           model,
           message,
-          messages = [],
           temporary = false,
         } = request.body;
 
         const { userId } = request;
 
-        const isAuthenticated = Boolean(userId.trim());
-        // const isTemporary = Boolean(userId.trim()) && Boolean(temporary);
-
-        // console.log({ isAuthenticated, isTemporary });
-
-        // return 'Hello world!';
-
-        //! UNAUTHED USER AND TEMPORARY
-        if (!isAuthenticated) {
-          // Add limits to unathed users
-
-          const assistantResponses = messages.filter(
-            (i) => i.role === 'assistant',
-          );
-
-          const UNAUTH_LIMIT = 3;
-          // console.log(assistantResponses);
-
-          if (!assistantResponses.length > UNAUTH_LIMIT)
-            return reply.badRequest(
-              'You’ve reached the free chat limit. Sign in or create an account to continue chatting.',
-            );
-
-          const chatCompletion = await groq.chat.completions.create({
-            messages,
-            model: 'openai/gpt-oss-120b',
-            stream: false,
-          });
-
-          const assistantReply =
-            chatCompletion.choices[0]?.message?.content || '';
-
-          return reply.send({ role: 'assistant', content: assistantReply });
-        }
-
-        if (temporary) {
-          //! CHECK IF array has at least 1 role="user". DO THIS CHECK FOR UNAUTHED USERS too
-          if (!messages.length)
-            return reply.badRequest(
-              'Provide at least one message. Messages required for temporary',
-            );
-
-          const chatCompletion = await groq.chat.completions.create({
-            messages,
-            model: 'openai/gpt-oss-120b',
-            stream: false,
-          });
-
-          const assistantReply =
-            chatCompletion.choices[0]?.message?.content || '';
-
-          //! ADD SUGGESTIONS
-
-          return reply.send({ role: 'assistant', content: assistantReply });
-        }
-
         //! USE TRANSACTIONS
+
         if (!message) return reply.badRequest('Message input is required');
 
         if (conversationId !== 'new') {
@@ -95,6 +38,7 @@ export default function (fastify, _, done) {
             user: userId,
           })
             .select({ _id: 0, role: 1, content: 1 })
+            .limit(30)
             .lean();
 
           const messages = [...history, { role: 'user', content: message }];
@@ -103,6 +47,7 @@ export default function (fastify, _, done) {
             messages,
             model: 'openai/gpt-oss-120b',
             stream: false,
+            include_reasoning: true,
           });
 
           const assistantReply =
@@ -378,8 +323,6 @@ export default function (fastify, _, done) {
 
       const { id } = request.params;
 
-      //! LIMIT BY 10 OR 5
-
       const conversation = await Conversation.findOne({
         _id: id,
         user: userId,
@@ -396,170 +339,212 @@ export default function (fastify, _, done) {
   );
 
   ////////////////////////////////////////////////////////////////////////! STREAMING
-  fastify.post('/api/v1/conversations', async (request, reply) => {
-    const {
-      conversationId,
-      messages,
-      model = 'openai/gpt-oss-20b',
-    } = request.body;
-
-    const { user } = await auth.api.getSession({
-      headers: fromNodeHeaders(request.headers),
-    });
-
-    const userId = user?.id || null;
-
-
-    // Explicit CORS headers for the hijacked response
-    const allowedOrigins = ['http://127.0.0.1:3000'];
-
-    const origin = request.headers.origin;
-
-    if (allowedOrigins.includes(origin)) {
-      reply.raw.setHeader('Access-Control-Allow-Origin', origin);
-      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
-      reply.raw.setHeader('Vary', 'Origin');
-    }
-
-    // Configure SSE headers
-    reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-    reply.raw.setHeader('Connection', 'keep-alive');
-    reply.raw.setHeader('X-Accel-Buffering', 'no');
-
-    // Take control of the response lifecycle
-    reply.hijack();
-
-    try {
-      const completionStream = await groq.chat.completions.create({
-        model,
-        messages,
-        stream: true,
-      });
-
-      let fullResponseText = '';
-
-      for await (const chunk of completionStream) {
-        const delta = chunk.choices[0]?.delta?.content || '';
-
-        if (delta) {
-          fullResponseText += delta;
-          reply.raw.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
-        }
-      }
-
-      // Signal that generation is complete
-      reply.raw.write('data: [DONE]\n\n');
-      reply.raw.end();
-
-      if (conversationId === 'new') {
-        const conversation = await Conversation.create({
-          user: userId,
-          title: messages[0].content.slice(0, 20), // fallback
-        });
-
-        await Message.create([
-          {
-            ...messages[0],
-            role: 'user',
-            user: userId,
-            conversation: conversation._id,
-          },
-          {
-            conversation: conversation._id,
-            role: 'assistant',
-            content: fullResponseText,
-            model,
-            user: userId,
-          },
-        ]);
-      }
-
-      if (conversationId !== 'new') {
-        const lastMessage = messages[messages.length - 1];
-
-        await Message.create([
-          {
-            ...lastMessage[0],
-            role: 'user',
-            user: userId,
-            conversation: conversationId,
-          },
-          {
-            conversation: conversationId,
-            role: 'assistant',
-            content: fullResponseText,
-            model,
-            user: userId,
-          },
-        ]);
-      }
-    } catch (error) {
-      fastify.log.error('Groq streaming error:');
-      console.error(error);
-
-      if (!reply.raw.writableEnded) {
-        reply.raw.write(
-          `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
-        );
-      }
-
-      reply.raw.end();
-    }
-  });
-
   fastify.post(
-    '/api/conversations/:id/generate-title',
+    '/api/v1/conversations',
     {
       preHandler: authenticateUser,
+      schema: {
+        body: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            message: { type: 'string' },
+          },
+        },
+      },
     },
     async (request, reply) => {
-      const { messages } = request.body;
-      const { id } = request.params;
+      const {
+        conversationId,
+        message,
+        model = 'openai/gpt-oss-20b',
+        createdAt,
+        temporary,
+      } = request.body;
+
+      // if (!message) return reply.badRequest('Message input is required');
 
       const { userId } = request;
 
-      const chatCompletion = await groq.chat.completions.create({
-        model,
-        messages: [
+      let messages = [];
+      let chatId = conversationId;
+      let messageId = null;
+
+      //////////////////////////////////////////////////////////////////////////////////! TEMP
+      if (conversationId === 'new') {
+        // Store in db
+        const fallbackTitle = message.slice(0, 50);
+
+        const createdConversation = await Conversation.create({
+          model,
+          title: fallbackTitle,
+          user: userId,
+          private: temporary,
+        });
+
+        const result = await Message.create([
           {
-            role: 'system',
-            content: `Generate a concise conversation title based on the messages provided.
-REQUIREMENTS:
-- MUST be under 50 characters total.
-- MUST use title case.
-- NO quotes, colons, or special characters.
-- Focus on the primary subject or task.
-Respond with ONLY the title, no explanation.`,
+            content: message,
+            conversation: createdConversation._id,
+            role: 'user',
+            user: userId,
+            model,
+            sequence: 1,
+            status: 'complete',
           },
-          ...messages,
-        ],
-        stream: false,
-      });
+          {
+            conversation: createdConversation._id,
+            role: 'assistant',
+            user: userId,
+            model,
+            sequence: 2,
+          },
+        ]);
 
-      const title = chatCompletion.choices[0]?.message?.content || '';
+        chatId = createdConversation._id;
+        messageId = result[1]._id;
+      } else {
+        const history = await Message.find({
+          conversation: conversationId,
+          user: userId,
+        })
+          .sort({ createdAt: -1 })
+          .select({ _id: 0, role: 1, content: 1 })
+          .limit(30)
+          .lean();
 
-      return title;
+        const result = await Message.create([
+          {
+            content: message,
+            conversation: createdConversation._id,
+            role: 'user',
+            user: userId,
+            model,
+            sequence: 1, //! FIX
+          },
+          {
+            conversation: createdConversation._id,
+            role: 'assistant',
+            user: userId,
+            model,
+            status: 'pending',
+            sequence: 2, //! FIX
+          },
+        ]);
 
-      // if (conversationId !== 'new') {
-      //   const lastMessage = messages[messages.length - 1];
+        chatId = createdConversation._id;
+        messageId = result[1]._id;
+        messages = [...history, { role: 'user', content: message }];
+      }
+      //////////////////////////////////////////////////////////////////////////////////! TEMP
 
-      //   await Message.create([
-      //     {
-      //       ...lastMessage[0],
-      //       role: 'user',
-      //       user: userId,
-      //       conversation: conversationId,
-      //     },
-      //     {
-      //       conversation: conversationId,
-      //       role: 'assistant',
-      //       content: fullResponseText,
-      //       model,
-      //       user: userId,
-      //     },
-      //   ]);
-      // }
+      // Explicit CORS headers for the hijacked response
+      const allowedOrigins = ['http://127.0.0.1:3000'];
+
+      const origin = request.headers.origin;
+
+      if (allowedOrigins.includes(origin)) {
+        reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+        reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+        reply.raw.setHeader('Vary', 'Origin');
+      }
+
+      // Configure SSE headers
+      reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+      reply.raw.setHeader('Connection', 'keep-alive');
+      reply.raw.setHeader('X-Accel-Buffering', 'no');
+
+      // Take control of the response lifecycle
+      reply.hijack();
+
+      ////////////////////////////////////////////////////////////////////////? TITLE AND ID
+      // code goes here
+      ////////////////////////////////////////////////////////////////////////? TITLE AND ID
+
+      try {
+        // const completionStream = await groq.chat.completions.create({
+        //   model,
+        //   messages,
+        //   stream: true,
+        // });
+
+        // let fullResponseText = '';
+
+        // for await (const chunk of completionStream) {
+        //   const delta = chunk.choices[0]?.delta?.content || '';
+
+        //   if (delta) {
+        //     fullResponseText += delta;
+        //     reply.raw.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+        //   }
+        // }
+
+        // Signal that generation is complete
+        reply.raw.write('data: [DONE]\n\n');
+        reply.raw.end();
+
+        await Message.findByIdAndUpdate(messageId, {
+          content: 'Full text goes here',
+          status: 'complete',
+        });
+
+        // if (conversationId === 'new') {
+        //   const conversation = await Conversation.create({
+        //     user: userId,
+        //     title: messages[0].content.slice(0, 20), // fallback
+        //   });
+
+        //   await Message.create([
+        //     {
+        //       ...messages[0],
+        //       role: 'user',
+        //       user: userId,
+        //       model,
+        //       conversation: chatId,
+        //     },
+        //     {
+        //       conversation: conversation._id,
+        //       role: 'assistant',
+        //       model,
+        //       user: userId,
+        //     },
+        //   ]);
+        // }
+
+        // if (conversationId !== 'new') {
+        //   const lastMessage = messages[messages.length - 1];
+
+        //   await Message.create([
+        //     {
+        //       ...lastMessage[0],
+        //       role: 'user',
+        //       user: userId,
+        //       conversation: conversationId,
+        //     },
+        //     {
+        //       conversation: conversationId,
+        //       role: 'assistant',
+        //       content: fullResponseText,
+        //       model,
+        //       user: userId,
+        //     },
+        //   ]);
+        // }
+      } catch (error) {
+        fastify.log.error(`[${request.url}] streaming error:`);
+        console.error(error);
+
+        if (!reply.raw.writableEnded) {
+          reply.raw.write(
+            `data: ${JSON.stringify({ error: 'Stream interrupted' })}\n\n`,
+          );
+        }
+
+        await Message.findByIdAndUpdate(messageId, { status: 'error' });
+
+        reply.raw.end();
+      }
     },
   );
 

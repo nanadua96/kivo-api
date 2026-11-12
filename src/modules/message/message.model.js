@@ -13,6 +13,7 @@ const messageSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: 'Conversation',
       required: true,
+      immutable: true,
     },
 
     role: {
@@ -29,6 +30,7 @@ const messageSchema = new Schema(
 
     model: {
       type: String,
+      immutable: true,
     },
 
     rating: {
@@ -36,10 +38,15 @@ const messageSchema = new Schema(
       enum: ['up', 'down'],
     },
 
+    sequence: {
+      type: Number,
+      default: 1,
+    },
+
     status: {
       type: String,
       enum: ['pending', 'streaming', 'complete', 'error', 'cancelled'],
-      default: 'complete',
+      default: 'pending',
     },
   },
   {

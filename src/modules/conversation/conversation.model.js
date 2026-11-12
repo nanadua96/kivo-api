@@ -25,6 +25,10 @@ const conversationSchema = new Schema(
     //   required: true,
     // },
 
+    private: {
+      type: Boolean,
+    },
+
     status: {
       type: String,
       enum: ['active', 'deleted'],

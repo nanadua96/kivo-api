@@ -2,8 +2,8 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 
-  const __DEV__ = process.env.NODE_ENV !== 'production';
-  
+const __DEV__ = process.env.NODE_ENV !== 'production';
+
 (async () => {
   // =================================
   // FASTIFY INSTANCE
@@ -86,10 +86,7 @@ import mongoose from 'mongoose';
   );
 
   fastify.setErrorHandler(function (error, _, reply) {
-
-  
-
-    const GENERIC_MESSAGE =  __DEV__
+    const GENERIC_MESSAGE = __DEV__
       ? 'Something went wrong. Check console for details.'
       : 'Something went wrong. Please try again later.';
 
