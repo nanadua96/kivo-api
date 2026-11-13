@@ -72,6 +72,7 @@ const __DEV__ = process.env.NODE_ENV !== 'production';
   fastify.get('/ping', (_, reply) => reply.send('pong'));
   fastify.register(import('./src/modules/auth/auth.routes.js'));
   fastify.register(import('./src/modules/conversation/conversation.routes.js'));
+  fastify.register(import('./src/modules/message/message.routes.js'));
 
   // =================================
   // ERROR HANDLERS

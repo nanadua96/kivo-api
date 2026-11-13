@@ -381,8 +381,8 @@ export default function (fastify, _, done) {
         },
         {
           $sort: {
-            date: -1,
             pinned: -1,
+            createdAt: -1,
           },
         },
         {
