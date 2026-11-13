@@ -44,7 +44,7 @@ const __DEV__ = process.env.NODE_ENV !== 'production';
       'http://127.0.0.1:3000',
       'http://localhost:3000',
     ],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
     credentials: true,
     maxAge: 86400,
@@ -71,7 +71,6 @@ const __DEV__ = process.env.NODE_ENV !== 'production';
   // =================================
   fastify.get('/ping', (_, reply) => reply.send('pong'));
   fastify.register(import('./src/modules/auth/auth.routes.js'));
-  fastify.register(import('./src/modules/user/user.routes.js'));
   fastify.register(import('./src/modules/conversation/conversation.routes.js'));
 
   // =================================

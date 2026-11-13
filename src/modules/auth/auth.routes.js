@@ -8,7 +8,6 @@ import { auth } from '../../lib/auth.js';
  * @returns {void}
  */
 export default function (fastify, _, done) {
-  // See: https://better-auth.com/docs/integrations/fastify#authentication-handler-setup
   fastify.route({
     method: ['GET', 'POST'],
     url: '/api/auth/*',
