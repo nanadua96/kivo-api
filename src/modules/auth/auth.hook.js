@@ -13,6 +13,7 @@ export function authenticateUser(request, reply, done) {
 
       // Decorate request
       request.userId = session.user.id;
+      request.userName = session.user.name;
 
       done();
     });

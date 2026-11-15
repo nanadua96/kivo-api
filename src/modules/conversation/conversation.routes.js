@@ -37,7 +37,7 @@ export default function (fastify, _, done) {
         temporary,
       } = request.body;
 
-      const { userId } = request;
+      const { userId, userName } = request;
 
       const model = 'qwen/qwen3.8-27b';
 
@@ -59,6 +59,7 @@ export default function (fastify, _, done) {
           ],
           stream: false,
           max_tokens: 32,
+          user: userId,
         });
 
         const fallbackTitle = message.trim().replace(/\s+/g, ' ').slice(0, 50);
@@ -167,8 +168,15 @@ export default function (fastify, _, done) {
       try {
         const completionStream = await groq.chat.completions.create({
           model,
-          messages,
+          messages: [
+            {
+              role: 'system',
+              content: `User's name is ${userName}`,
+            },
+            ...messages,
+          ],
           stream: true,
+          user: userId,
         });
 
         let fullResponseText = '';
