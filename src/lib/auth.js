@@ -17,7 +17,7 @@ export const auth = betterAuth({
   trustedOrigins: [
     'http://127.0.0.1:4000',
     'http://localhost:4000',
-    'https://kivo-web-azure.vercel.app',
+    process.env.CLIENT_ORIGIN,
   ],
   emailAndPassword: {
     enabled: true,

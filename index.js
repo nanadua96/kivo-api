@@ -43,7 +43,6 @@ const __DEV__ = process.env.NODE_ENV !== 'production';
     origin: process.env.CLIENT_ORIGIN || [
       'http://127.0.0.1:3000',
       'http://localhost:3000',
-      'https://kivo-web-azure.vercel.app',
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
