@@ -14,9 +14,13 @@ export const auth = betterAuth({
       joins: true,
     },
   },
-  trustedOrigins: ['http://127.0.0.1:4000'],
+  trustedOrigins: [
+    'http://127.0.0.1:4000',
+    'http://localhost:4000',
+    'https://kivo-web-azure.vercel.app',
+  ],
   emailAndPassword: {
-    enabled: false,
+    enabled: true,
   },
   //   user: {
   //     additionalFields: {
@@ -27,20 +31,20 @@ export const auth = betterAuth({
   //     },
   //   },
   plugins: [
-    emailOTP({
-      async sendVerificationOTP({ email, otp, type }) {
-        try {
-          if (type === 'sign-in') {
-            await sendOTPEmail({ to: email, otp, type });
-          } else if (type === 'email-verification') {
-            // Send the OTP for email verification
-          } else {
-            // Send the OTP for password reset
-          }
-        } catch (error) {
-          console.log('Error sending email:', error);
-        }
-      },
-    }),
+    // emailOTP({
+    //   async sendVerificationOTP({ email, otp, type }) {
+    //     try {
+    //       if (type === 'sign-in') {
+    //         await sendOTPEmail({ to: email, otp, type });
+    //       } else if (type === 'email-verification') {
+    //         // Send the OTP for email verification
+    //       } else {
+    //         // Send the OTP for password reset
+    //       }
+    //     } catch (error) {
+    //       console.log('Error sending email:', error);
+    //     }
+    //   },
+    // }),
   ],
 });
