@@ -35,7 +35,7 @@ export function loadSample(userId) {
   const finalMessages = [];
 
   conversations.forEach((conversation) => {
-    const conversationId = new mongoose.Types.ObjectId();
+    const conversationId = new mongoose.Types.ObjectId().toString();
 
     const { messages, ...conversationData } = conversation;
 

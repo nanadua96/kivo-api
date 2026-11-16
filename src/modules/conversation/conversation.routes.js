@@ -433,7 +433,7 @@ export default function (fastify, _, done) {
       if (!isActive) return reply.send([]);
 
       const messages = await Message.find({ conversation: id, user: userId })
-        .sort({ createdAt: 1 })
+        .sort({ sequence: 1 })
         .select({
           _id: 0,
           id: '$_id',
@@ -553,8 +553,10 @@ export default function (fastify, _, done) {
     async (request, reply) => {
       const { userId } = request;
 
-      await Conversation.create(loadSample(userId).conversations);
-      await Message.create(loadSample(userId).messages);
+      const { conversations, messages } = loadSample(userId);
+
+      await Conversation.create(conversations);
+      await Message.create(messages);
 
       return reply.code(201).send();
     },
