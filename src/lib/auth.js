@@ -13,10 +13,6 @@ export const auth = betterAuth({
     database: {
       joins: true,
     },
-    crossSubDomainCookies: {
-      enabled: true,
-      domain: 'vercel.app',
-    },
   },
   trustedOrigins: [
     'http://127.0.0.1:4000',

@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { groq } from '../../lib/index.js';
 import { authenticateUser } from '../auth/auth.hook.js';
 import { Message } from '../message/message.model.js';
+import { loadSample } from './conversation.data.js';
 import { Conversation } from './conversation.model.js';
 
 /**
@@ -546,5 +547,17 @@ export default function (fastify, _, done) {
     },
   );
 
+  fastify.post(
+    '/api/v1/conversations/sample-data',
+    { preHandler: authenticateUser },
+    async (request, reply) => {
+      const { userId } = request;
+
+      await Conversation.create(loadSample(userId).conversations);
+      await Message.create(loadSample(userId).messages);
+
+      return reply.code(201).send();
+    },
+  );
   done();
 }
