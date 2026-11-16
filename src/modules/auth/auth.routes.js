@@ -27,7 +27,12 @@ export default function (fastify, _, done) {
 
         reply.status(response.status);
 
-        response.headers.forEach((value, key) => reply.header(key, value));
+        response.headers.forEach((value, key) => {
+          if (key !== 'set-cookie') reply.header(key, value);
+        });
+
+        const setCookies = response.headers.getSetCookie();
+        if (setCookies.length) reply.header('set-cookie', setCookies);
 
         return reply.send(response.body ? await response.text() : null);
       } catch (error) {
